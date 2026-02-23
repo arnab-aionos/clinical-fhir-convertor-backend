@@ -1,0 +1,29 @@
+# Web framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+
+# Async utilities
+aiosqlite==0.20.0
+aiofiles==24.1.0
+
+# PDF processing
+PyMuPDF==1.25.3
+Pillow==10.4.0
+
+# OCR
+surya-ocr==0.7.0
+
+# LLM (Groq - free API)
+groq==0.15.0
+
+# FHIR
+fhir.resources==7.1.0
+
+# Settings & env
+python-dotenv==1.0.1
+pydantic==2.10.6
+pydantic-settings==2.7.1
+
+# Utilities
+python-dateutil==2.9.0
