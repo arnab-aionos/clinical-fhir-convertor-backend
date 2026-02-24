@@ -1,6 +1,6 @@
 """
 NHCX Hackathon PS2 – Clinical Documents to FHIR Convertor
-──────────────────────────────────────────────────────────
+
 FastAPI entry point.
 
 Run locally:

@@ -1,6 +1,6 @@
 """
 Jobs Route
-──────────
+
 GET  /api/v1/jobs                           – List recent jobs (last 50, newest first)
 GET  /api/v1/jobs/{job_id}                  – Job status + metadata
 GET  /api/v1/jobs/{job_id}/text             – Raw OCR/extracted text
@@ -48,7 +48,7 @@ _FHIR_ALLOWED_STATUSES = {"awaiting_verification", "completed"}
 _UPDATE_ALLOWED_STATUSES = {"awaiting_verification", "completed", "failed"}
 
 
-# ─── Helpers ──────────────────────────────────────────────────────────────────
+# Helpers
 
 async def _require_job(job_id: str) -> dict:
     job = await get_job(job_id)
@@ -71,7 +71,6 @@ def _to_response(job: dict) -> JobResponse:
     )
 
 
-# ─── GET /jobs ────────────────────────────────────────────────────────────────
 # IMPORTANT: this static route must be registered BEFORE /{job_id} to avoid
 # FastAPI treating "jobs" as a job_id path parameter.
 
@@ -82,7 +81,6 @@ async def list_jobs():
     return [_to_response(j) for j in jobs]
 
 
-# ─── GET /jobs/{job_id} ───────────────────────────────────────────────────────
 
 @router.get("/{job_id}", response_model=JobResponse)
 async def get_job_status(job_id: str):
@@ -91,7 +89,6 @@ async def get_job_status(job_id: str):
     return _to_response(job)
 
 
-# ─── GET /jobs/{job_id}/text ──────────────────────────────────────────────────
 
 @router.get("/{job_id}/text", response_model=JobTextResponse)
 async def get_job_text(job_id: str):
@@ -108,7 +105,6 @@ async def get_job_text(job_id: str):
     )
 
 
-# ─── GET /jobs/{job_id}/extracted ─────────────────────────────────────────────
 
 @router.get("/{job_id}/extracted", response_model=JobExtractedResponse)
 async def get_extracted_data(job_id: str):
@@ -138,7 +134,6 @@ async def get_extracted_data(job_id: str):
     )
 
 
-# ─── PUT /jobs/{job_id}/extracted ─────────────────────────────────────────────
 
 class UpdateExtractedRequest(BaseModel):
     extracted_data: dict[str, Any]
@@ -173,7 +168,6 @@ async def update_extracted_data(job_id: str, body: UpdateExtractedRequest):
     )
 
 
-# ─── POST /jobs/{job_id}/generate-fhir ───────────────────────────────────────
 
 @router.post("/{job_id}/generate-fhir", response_model=JobFhirResponse)
 async def generate_fhir(job_id: str):
@@ -222,7 +216,6 @@ async def generate_fhir(job_id: str):
     return JobFhirResponse(job_id=job_id, fhir_bundle=bundle)
 
 
-# ─── GET /jobs/{job_id}/fhir ──────────────────────────────────────────────────
 
 @router.get("/{job_id}/fhir", response_model=JobFhirResponse)
 async def get_fhir_bundle(job_id: str):
@@ -237,7 +230,6 @@ async def get_fhir_bundle(job_id: str):
     return JobFhirResponse(job_id=job_id, fhir_bundle=fhir)
 
 
-# ─── GET /jobs/{job_id}/validation ───────────────────────────────────────────
 
 @router.get("/{job_id}/validation", response_model=JobValidationResponse)
 async def get_validation_report(job_id: str):
@@ -258,7 +250,6 @@ async def get_validation_report(job_id: str):
     )
 
 
-# ─── GET /jobs/{job_id}/excel ─────────────────────────────────────────────────
 
 @router.get("/{job_id}/excel")
 async def get_excel_export(job_id: str):
@@ -298,7 +289,6 @@ async def get_excel_export(job_id: str):
     )
 
 
-# ─── DELETE /jobs/{job_id} ────────────────────────────────────────────────────
 
 @router.delete("/{job_id}", status_code=204)
 async def delete_job_record(job_id: str):

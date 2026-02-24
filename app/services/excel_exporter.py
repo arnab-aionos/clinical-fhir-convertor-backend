@@ -1,7 +1,7 @@
 """
 Excel Exporter Service
-───────────────────────
-Generates a human-readable Excel workbook from LLM-extracted clinical data
+
+Generates a human-readable Excel workbook from extracted clinical data
 for manual cross-verification before FHIR bundle generation (Stage 2.5).
 
 One workbook per job, one sheet per clinical section.
@@ -23,7 +23,7 @@ from openpyxl.utils import get_column_letter
 
 logger = logging.getLogger(__name__)
 
-# ─── Style constants ───────────────────────────────────────────────────────────
+# Style constants
 
 _FILL_HEADER = PatternFill("solid", fgColor="BDD7EE")   # Light blue — header rows
 _FILL_HIGH   = PatternFill("solid", fgColor="C6EFCE")   # Green  — HIGH confidence
@@ -50,7 +50,7 @@ _MIN_COL_WIDTH = 20
 _MAX_COL_WIDTH = 60
 
 
-# ─── Utility helpers ──────────────────────────────────────────────────────────
+# Utility helpers
 
 def _red_border() -> Border:
     """Thick red border for FHIR-required fields that are null."""
@@ -166,7 +166,7 @@ def _auto_size(ws) -> None:
         )
 
 
-# ─── Sheet builders — shared ──────────────────────────────────────────────────
+# Sheet builders — shared
 
 def _sheet_patient(wb, patient: dict, conf_score: float) -> None:
     ws = wb.create_sheet("Patient Info")
@@ -188,7 +188,7 @@ def _sheet_patient(wb, patient: dict, conf_score: float) -> None:
     _auto_size(ws)
 
 
-# ─── Sheet builders — Discharge Summary ───────────────────────────────────────
+# Sheet builders — Discharge Summary
 
 def _sheet_encounter(wb, encounter: dict, conf_score: float) -> None:
     ws = wb.create_sheet("Encounter Info")
@@ -386,7 +386,7 @@ def _sheet_investigations(wb, investigations: list, conf_score: float) -> None:
     _auto_size(ws)
 
 
-# ─── Sheet builders — Diagnostic Report ───────────────────────────────────────
+# Sheet builders — Diagnostic Report
 
 def _sheet_laboratory(wb, laboratory: dict, conf_score: float) -> None:
     ws = wb.create_sheet("Laboratory Info")
@@ -456,7 +456,7 @@ def _sheet_observations(wb, observations: list, conf_score: float) -> None:
     _auto_size(ws)
 
 
-# ─── Summary sheet ────────────────────────────────────────────────────────────
+# Summary sheet
 
 def _count_fields(data: dict, _skip: frozenset = frozenset(["_confidence", "document_type"])) -> tuple[int, int]:
     """
@@ -531,7 +531,7 @@ def _sheet_summary(
     ws.column_dimensions["B"].width = 55
 
 
-# ─── Public ExcelExporter class ───────────────────────────────────────────────
+# Public ExcelExporter class
 
 class ExcelExporter:
     """

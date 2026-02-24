@@ -1,7 +1,7 @@
 """
 Confidence Scorer
-──────────────────
-After LLM extraction, scores confidence (0.0–1.0) for each extracted field group
+
+Scores confidence (0.0–1.0) for each extracted field group
 using a lightweight Groq call.
 
 Confidence levels:
@@ -33,9 +33,7 @@ def _get_client() -> Groq:
     return _client
 
 
-# ─── Heuristic baseline ───────────────────────────────────────────────────────
-# Before calling the LLM, compute a baseline confidence from the extracted data
-# itself (null fields → low confidence, non-null → medium baseline).
+# Heuristic baseline — computed from field presence without any API call.
 
 def _heuristic_confidence(doc_type: str, extracted: dict) -> dict[str, float]:
     """
@@ -86,7 +84,7 @@ def _heuristic_confidence(doc_type: str, extracted: dict) -> dict[str, float]:
     return scores
 
 
-# ─── LLM confidence scoring ───────────────────────────────────────────────────
+# LLM-based confidence scoring
 
 _DS_CONFIDENCE_KEYS = [
     "patient", "encounter", "diagnoses", "vitals", "medications",

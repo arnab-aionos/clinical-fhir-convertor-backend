@@ -1,20 +1,13 @@
 """
-LLM Extractor Service  (Phase 5 – enhanced)
-─────────────────────────────────────────────
-Pipeline per document:
-  1. Abbreviation expansion  (pre-process OCR text)
-  2. Document type classification  (quick Groq call)
-  3. Structured extraction with multi-page chunking + merge
-  4. Confidence scoring
-  5. Pydantic validation of extracted data
+LLM Extractor Service
 
-Multi-page strategy
-───────────────────
-If total expanded text ≤ MAX_SINGLE_CALL_CHARS  →  single Groq call (fast path).
-If text is longer                               →  chunk by page breaks,
-    extract each chunk, merge partial extractions:
-      • Single-value fields  (patient, encounter, vitals):  first non-null wins
-      • List fields (diagnoses, medications, observations):  concatenated + deduplicated
+Extraction pipeline per document:
+  abbreviation expansion → classification → structured extraction → confidence scoring
+
+Multi-page chunking: text > MAX_SINGLE_CALL_CHARS is split at page breaks into
+MAX_CHUNK_CHARS slices and extracted independently, then merged:
+  - Single-value fields (patient, encounter, vitals): first non-null wins
+  - List fields (diagnoses, medications, observations): concatenated + deduplicated
 """
 
 import json
@@ -32,7 +25,7 @@ from app.services.confidence_scorer import score_confidence, annotate_with_confi
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# ─── Groq client singleton ────────────────────────────────────────────────────
+# Groq client (initialized once per process)
 _client: Groq | None = None
 
 def _get_client() -> Groq:
@@ -42,14 +35,14 @@ def _get_client() -> Groq:
     return _client
 
 
-# ─── Token / character budgets ────────────────────────────────────────────────
+# Character budgets
 MAX_SINGLE_CALL_CHARS = 10_000   # Below this, one call is fine
 MAX_CHUNK_CHARS       = 8_000    # Max chars per chunk in multi-page mode
 CLASSIFY_SNIPPET_CHARS = 3_000   # Classification only needs first N chars
 MAX_RETRIES           = 2        # Retry on JSON parse failure
 
 
-# ─── Prompt templates ─────────────────────────────────────────────────────────
+# Prompt templates
 
 _CLASSIFY_SYSTEM = """You are a clinical document classifier for Indian hospital documents.
 Classify the document as exactly one of:
@@ -169,7 +162,7 @@ _DR_SCHEMA = """{
 }"""
 
 
-# ─── Groq call with retry ─────────────────────────────────────────────────────
+# Groq call with JSON-mode and retry on parse failure / rate limit
 
 def _call_groq_json(system_prompt: str, user_prompt: str, attempt: int = 0) -> dict[str, Any]:
     client = _get_client()
@@ -203,7 +196,7 @@ def _call_groq_json(system_prompt: str, user_prompt: str, attempt: int = 0) -> d
         raise
 
 
-# ─── Step 1: Classify ─────────────────────────────────────────────────────────
+# Document classification
 
 def classify_document(expanded_text: str) -> str:
     snippet = expanded_text[:CLASSIFY_SNIPPET_CHARS]
@@ -227,7 +220,7 @@ def classify_document(expanded_text: str) -> str:
     return "unknown"
 
 
-# ─── Multi-page chunking ──────────────────────────────────────────────────────
+# Multi-page chunking
 
 _PAGE_SEP = "\n\n--- PAGE BREAK ---\n\n"
 
@@ -255,7 +248,7 @@ def _chunk_pages(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]:
     return chunks
 
 
-# ─── Merge helpers ────────────────────────────────────────────────────────────
+# Merge helpers for multi-chunk results
 
 def _first_non_null(a: Any, b: Any) -> Any:
     if a is None or (isinstance(a, str) and not a.strip()):
@@ -339,7 +332,7 @@ def _merge_diagnostic_reports(extractions: list[dict]) -> dict:
     return merged
 
 
-# ─── Step 2: Extract (single chunk) ──────────────────────────────────────────
+# Single-chunk extractors
 
 def _extract_ds_chunk(text: str) -> dict[str, Any]:
     user_prompt = (
@@ -359,7 +352,7 @@ def _extract_dr_chunk(text: str) -> dict[str, Any]:
     return _call_groq_json(_DR_SYSTEM, user_prompt)
 
 
-# ─── Main extraction with chunking ───────────────────────────────────────────
+# Main extraction dispatcher (single call or chunked)
 
 def _extract_with_chunking(doc_type: str, expanded_text: str) -> dict[str, Any]:
     if len(expanded_text) <= MAX_SINGLE_CALL_CHARS:
@@ -389,31 +382,28 @@ def _extract_with_chunking(doc_type: str, expanded_text: str) -> dict[str, Any]:
         return _merge_diagnostic_reports(partials)
 
 
-# ─── Public entry point ────────────────────────────────────────────────────────
+# Public entry point
 
 def extract_clinical_data(raw_text: str) -> tuple[str, dict[str, Any]]:
     """
     Full extraction pipeline.
     Returns (document_type, extracted_dict_with_confidence).
     """
-    # Pre-process: expand medical abbreviations
     logger.info("Pre-processing: expanding medical abbreviations…")
     expanded_text = expand_abbreviations(raw_text)
 
-    # Step 1: Classify
-    logger.info("Step 1: Classifying document type…")
+    logger.info("Classifying document type…")
     doc_type = classify_document(expanded_text)
     logger.info("Classified as: %s", doc_type)
 
-    # Step 2: Extract
-    logger.info("Step 2: Extracting structured data…")
+    logger.info("Extracting structured data…")
     raw_extracted = _extract_with_chunking(
         doc_type if doc_type != "unknown" else "diagnostic_report",
         expanded_text,
     )
 
-    # Step 3: Pydantic validation + normalisation
-    logger.info("Step 3: Validating extracted data…")
+    # Pydantic validation + normalisation
+    logger.info("Validating extracted data…")
     try:
         if doc_type == "discharge_summary":
             validated = DischargeSummaryData.model_validate(raw_extracted)
@@ -427,8 +417,7 @@ def extract_clinical_data(raw_text: str) -> tuple[str, dict[str, Any]]:
         logger.warning("Pydantic validation failed (%s). Using raw LLM output.", exc)
         extracted = raw_extracted
 
-    # Step 4: Confidence scoring
-    logger.info("Step 4: Scoring extraction confidence…")
+    logger.info("Scoring extraction confidence…")
     confidence = score_confidence(doc_type, extracted, expanded_text, use_llm=True)
     final = annotate_with_confidence(extracted, confidence)
 

@@ -1,13 +1,10 @@
 """
-Upload Route
-────────────
-POST /api/v1/upload
+Upload Route — POST /api/v1/upload
 
 Accepts a PDF, JPEG, or PNG file. Creates a job record and launches
 the full processing pipeline as a background task.
 
-Pipeline stages
-───────────────
+Pipeline stages:
   Stage 1   — PDF / image → raw text  (PyMuPDF direct or Surya OCR)
   Stage 2   — raw text → structured JSON  (LLM extraction + confidence scoring)
   Stage 2.5 — structured JSON → Excel workbook  (cross-verification artifact)
@@ -44,20 +41,14 @@ _ALLOWED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
 
 async def _run_pipeline(job_id: str, file_path: str) -> None:
     """
-    Full background pipeline.
-
-    Stage 1:   PDF / image → raw text
-    Stage 2:   raw text → structured JSON (LLM extraction + confidence scoring)
-    Stage 2.5: structured JSON → Excel cross-verification workbook
-               Job status becomes "awaiting_verification" after this step.
-
-    Stage 3 (FHIR generation) is NOT triggered automatically.
-    It requires an explicit POST /api/v1/jobs/{job_id}/generate-fhir call.
+    Full background pipeline: text extraction → LLM extraction → Excel workbook.
+    Halts at "awaiting_verification". Stage 3 (FHIR) requires an explicit
+    POST /api/v1/jobs/{job_id}/generate-fhir call.
     """
     try:
         await update_job(job_id, status="processing")
 
-        # ── Stage 1: PDF / image → raw text ──────────────────────────────────
+        # Stage 1: PDF / image → raw text
         logger.info("[%s] Stage 1: PDF processing…", job_id)
         result = await asyncio.to_thread(process_pdf, file_path)
 
@@ -72,14 +63,14 @@ async def _run_pipeline(job_id: str, file_path: str) -> None:
             job_id, result.ocr_method, result.page_count,
         )
 
-        # ── Stage 2: LLM classification + extraction ──────────────────────────
+        # Stage 2: LLM classification + extraction
         logger.info("[%s] Stage 2: LLM extraction…", job_id)
         doc_type, extracted = await asyncio.to_thread(extract_clinical_data, result.raw_text)
 
         await update_job(job_id, document_type=doc_type, extracted_data=extracted)
         logger.info("[%s] Stage 2 complete. Document type: %s", job_id, doc_type)
 
-        # ── Stage 2.5: Excel cross-verification workbook ──────────────────────
+        # Stage 2.5: Excel cross-verification workbook
         logger.info("[%s] Stage 2.5: Generating Excel cross-verification workbook…", job_id)
         excel_path: str | None = None
         try:

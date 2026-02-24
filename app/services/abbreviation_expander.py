@@ -1,11 +1,11 @@
 """
 Medical Abbreviation Expander
-──────────────────────────────
-Expands Indian clinical document abbreviations before sending OCR text to the LLM.
-This dramatically improves extraction accuracy because Llama 3.3 70B handles
+
+Expands Indian clinical document abbreviations before LLM extraction.
+Significantly improves extraction accuracy — the LLM handles
 "history of diabetes mellitus" much better than "H/O DM".
 
-Coverage: Abbreviations seen in the 42 diagnostic report + 72 discharge summary
+Coverage: abbreviations from the 42 diagnostic report + 72 discharge summary
 samples analyzed from the NHCX dataset.
 """
 
@@ -14,13 +14,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# ─── Master abbreviation table ────────────────────────────────────────────────
-# Key: abbreviation (as it appears in OCR output, including slash forms)
-# Value: full expansion
-# Order matters for regex: longer/more specific entries should come first.
+# Master abbreviation table.
+# Sorted longest-first so longer keys (K/C/O) match before shorter overlapping ones (C/O).
 
 ABBREVIATIONS: dict[str, str] = {
-    # ── History / Complaints ──────────────────────────────────────────────────
+    # History / Complaints
     "C/O":        "complaining of",
     "H/O":        "history of",
     "K/C/O":      "known case of",
@@ -28,7 +26,7 @@ ABBREVIATIONS: dict[str, str] = {
     "N/K/C/OD":   "not known case of diabetes",
     "K/C/OD":     "known case of diabetes",
 
-    # ── Examination ───────────────────────────────────────────────────────────
+    # Examination
     "S/E":        "systemic examination",
     "G/E":        "general examination",
     "L/E":        "local examination",
@@ -37,7 +35,7 @@ ABBREVIATIONS: dict[str, str] = {
     "P/R":        "per rectum",
     "P/V":        "per vaginum",
 
-    # ── Systems ───────────────────────────────────────────────────────────────
+    # Systems
     "CVS":        "cardiovascular system",
     "RS":         "respiratory system",
     "CNS":        "central nervous system",
@@ -45,7 +43,7 @@ ABBREVIATIONS: dict[str, str] = {
     "GU":         "genitourinary",
     "MSS":        "musculoskeletal system",
 
-    # ── Clinical findings (negative/normal) ───────────────────────────────────
+    # Clinical findings (negative/normal)
     "NFND":       "no focal neurological deficit",
     "NVBS":       "normal vesicular breath sounds",
     "NAD":        "no abnormality detected",
@@ -54,7 +52,7 @@ ABBREVIATIONS: dict[str, str] = {
     "NFD":        "no focal deficit",
     "NEAD":       "no evidence of active disease",
 
-    # ── Medications / Frequency ───────────────────────────────────────────────
+    # Medications / Frequency
     "OD":         "once daily",
     "BD":         "twice daily",
     "TDS":        "three times daily",
@@ -76,7 +74,7 @@ ABBREVIATIONS: dict[str, str] = {
     "I/V":        "intravenous",
     "I/M":        "intramuscular",
 
-    # ── Diagnoses / Conditions ────────────────────────────────────────────────
+    # Diagnoses / Conditions
     "DM":         "diabetes mellitus",
     "HTN":        "hypertension",
     "CAD":        "coronary artery disease",
@@ -108,7 +106,7 @@ ABBREVIATIONS: dict[str, str] = {
     "PPH":        "postpartum hemorrhage",
     "LSCS":       "lower segment cesarean section",
 
-    # ── Vitals ────────────────────────────────────────────────────────────────
+    # Vitals
     "BP":         "blood pressure",
     "HR":         "heart rate",
     "PR":         "pulse rate",
@@ -119,7 +117,7 @@ ABBREVIATIONS: dict[str, str] = {
     "Ht":         "height",
     "BMI":        "body mass index",
 
-    # ── Laboratory / Investigations ───────────────────────────────────────────
+    # Laboratory / Investigations
     "CBC":        "complete blood count",
     "CBP":        "complete blood picture",
     "Hb":         "hemoglobin",
@@ -163,7 +161,7 @@ ABBREVIATIONS: dict[str, str] = {
     "EF":         "ejection fraction",
     "LVEF":       "left ventricular ejection fraction",
 
-    # ── Procedure / Surgical ──────────────────────────────────────────────────
+    # Procedure / Surgical
     "CABG":       "coronary artery bypass grafting",
     "PTCA":       "percutaneous transluminal coronary angioplasty",
     "PCI":        "percutaneous coronary intervention",
@@ -173,7 +171,7 @@ ABBREVIATIONS: dict[str, str] = {
     "LA":         "local anaesthesia",
     "SA":         "spinal anaesthesia",
 
-    # ── Discharge status ──────────────────────────────────────────────────────
+    # Discharge / Miscellaneous
     "DAMA":       "discharged against medical advice",
     "D/D":        "differential diagnosis",
     "A/W":        "associated with",
@@ -185,8 +183,7 @@ ABBREVIATIONS: dict[str, str] = {
     "k/c/o":      "known case of",
 }
 
-# Build a compiled regex for word-boundary matching.
-# Sorted by length descending so longer matches take priority (e.g. K/C/O before C/O).
+# Compiled regex — sorted by length so longer keys match before shorter overlapping ones.
 _SORTED_ABBREVS = sorted(ABBREVIATIONS.keys(), key=len, reverse=True)
 
 # Escape and join into one pattern. Use word boundaries where possible,

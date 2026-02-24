@@ -1,15 +1,13 @@
 """
 FHIR Mapper Service
-────────────────────
-Converts extracted clinical JSON → FHIR R4 Bundle using fhir.resources (Pydantic v2).
 
-Discharge Summary  → FHIR Composition Bundle (type: document)
-Diagnostic Report  → FHIR DiagnosticReport Bundle (type: collection)
+Converts extracted clinical JSON to FHIR R4 Bundle dicts.
 
-NHCX profile URLs used for meta.profile (based on ABDM NHCX IG):
-  - NHCXPatient, NHCXOrganization, NHCXPractitioner, NHCXEncounter,
-    NHCXCondition, NHCXProcedure, NHCXObservation, NHCXMedicationStatement,
-    NHCXComposition, NHCXDiagnosticReport
+Discharge Summary  → Bundle type "document" with Composition root resource
+Diagnostic Report  → Bundle type "collection" with DiagnosticReport root resource
+
+NHCX profile URLs (meta.profile) follow the ABDM NHCX IG:
+  https://nrces.in/ndhm/fhir/r4/StructureDefinition/{ResourceType}
 """
 
 import uuid
@@ -19,10 +17,10 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# ─── NHCX Profile base URL ─────────────────────────────────────────────────────
+# NHCX profile base URL
 _NHCX_BASE = "https://nrces.in/ndhm/fhir/r4/StructureDefinition"
 
-# ─── LOINC codes for common vitals ─────────────────────────────────────────────
+# LOINC codes for common vitals
 _VITAL_LOINC = {
     "bp": "55284-4",      # Blood pressure systolic & diastolic
     "pulse": "8867-4",    # Heart rate
@@ -102,7 +100,7 @@ def _meta(profile_name: str) -> dict:
     return {"profile": [f"{_NHCX_BASE}/{profile_name}"]}
 
 
-# ─── Resource builders ────────────────────────────────────────────────────────
+# Resource builders
 
 def _build_patient(patient: dict) -> dict:
     name_text = patient.get("name") or "Unknown"
@@ -323,7 +321,7 @@ def _entry(resource: dict, fullUrl: Optional[str] = None) -> dict:
     return e
 
 
-# ─── Discharge Summary → FHIR Document Bundle ─────────────────────────────────
+# Discharge Summary → FHIR document Bundle
 
 def map_discharge_summary(data: dict) -> dict:
     patient_data = data.get("patient") or {}
@@ -445,7 +443,7 @@ def map_discharge_summary(data: dict) -> dict:
     return bundle
 
 
-# ─── Diagnostic Report → FHIR DiagnosticReport Bundle ────────────────────────
+# Diagnostic Report → FHIR collection Bundle
 
 def map_diagnostic_report(data: dict) -> dict:
     patient_data = data.get("patient") or {}
@@ -497,7 +495,7 @@ def map_diagnostic_report(data: dict) -> dict:
     return bundle
 
 
-# ─── Public entry point ───────────────────────────────────────────────────────
+# Public entry point
 
 def generate_fhir_bundle(document_type: str, extracted_data: dict) -> dict:
     if document_type == "discharge_summary":

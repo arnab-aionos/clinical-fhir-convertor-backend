@@ -1,6 +1,6 @@
 """
 PDF Processor Service
-─────────────────────
+
 Handles two paths:
   1. Digital/text-based PDF  → PyMuPDF direct text extraction
   2. Scanned/image-based PDF → PyMuPDF → page PNGs → Surya OCR → text
@@ -22,8 +22,7 @@ from app.core.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# ─── Surya OCR singleton ──────────────────────────────────────────────────────
-# Models are large (~1-2 GB) – load once per process.
+# Surya OCR model singletons — models are ~500MB-1GB, load once per process.
 
 _surya_models: Optional[dict] = None
 
@@ -86,7 +85,7 @@ def _run_surya_ocr(images: list[Image.Image]) -> str:
     return "\n\n--- PAGE BREAK ---\n\n".join(page_texts)
 
 
-# ─── Public API ───────────────────────────────────────────────────────────────
+# Public API
 
 class PDFProcessingResult:
     def __init__(
@@ -111,14 +110,14 @@ def process_pdf(file_path: str | Path) -> PDFProcessingResult:
 
     suffix = file_path.suffix.lower()
 
-    # ── Direct image upload (JPEG / PNG) ──────────────────────────────────────
+    # Direct image upload (JPEG / PNG)
     if suffix in {".jpg", ".jpeg", ".png"}:
         logger.info("Processing direct image file: %s", file_path.name)
         img = Image.open(file_path).convert("RGB")
         raw_text = _run_surya_ocr([img])
         return PDFProcessingResult(raw_text=raw_text, ocr_method="surya_ocr", page_count=1)
 
-    # ── PDF ───────────────────────────────────────────────────────────────────
+    # PDF path
     doc = fitz.open(str(file_path))
     page_count = len(doc)
 

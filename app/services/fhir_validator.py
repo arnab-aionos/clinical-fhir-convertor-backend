@@ -1,6 +1,6 @@
 """
 FHIR Validator Service
-───────────────────────
+
 Schema-driven structural validation for FHIR R4 bundles using the
 official HL7 FHIR R4 JSON Schema (fhir.schema.json, 857 definitions).
 
@@ -27,10 +27,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# ─── Locate fhir.schema.json (backend root, two levels above this file) ──────
+# fhir.schema.json is expected at the backend root (two levels above this file)
 _SCHEMA_PATH = Path(__file__).parent.parent.parent / "fhir.schema.json"
 
-# ─── Module-level singletons — loaded once at import time ────────────────────
+# Module-level singletons — loaded once at import time
 _FHIR_SCHEMA: dict | None = None
 _RESOLVER = None          # jsonschema.RefResolver instance
 _USE_SCHEMA: bool = False  # True only when schema + jsonschema both available
@@ -72,7 +72,7 @@ def _init_schema() -> None:
 _init_schema()
 
 
-# ─── Lightweight fallback (used when schema is unavailable) ──────────────────
+# Lightweight fallback — used when fhir.schema.json is absent
 
 _REQUIRED_FIELDS: dict[str, list[str]] = {
     "Bundle":              ["resourceType", "type"],
@@ -102,7 +102,7 @@ def _fallback_validate(resource: dict) -> list[str]:
     ]
 
 
-# ─── Schema-driven validation ─────────────────────────────────────────────────
+# Schema-driven validation
 
 def _schema_validate(resource: dict) -> list[str]:
     """
@@ -130,7 +130,7 @@ def _schema_validate(resource: dict) -> list[str]:
     return errors
 
 
-# ─── NHCX compliance warnings ────────────────────────────────────────────────
+# NHCX compliance warnings
 
 def _nhcx_warnings(resource: dict) -> list[str]:
     """Check NHCX-specific requirements and return warnings (not hard errors)."""
@@ -160,7 +160,7 @@ def _nhcx_warnings(resource: dict) -> list[str]:
     return warnings
 
 
-# ─── Public API ──────────────────────────────────────────────────────────────
+# Public API
 
 class ValidationReport:
     def __init__(self) -> None:
