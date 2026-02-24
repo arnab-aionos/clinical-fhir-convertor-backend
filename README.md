@@ -125,22 +125,6 @@ Documents are auto-classified by the LLM using the first 3,000 characters of exp
 - A Groq API key (free tier: 14,400 requests/day, no credit card required) — https://console.groq.com
 - `fhir.schema.json` placed at the backend root directory (download from hl7.org or https://build.fhir.org/fhir.schema.json)
 - On first scanned PDF upload, Surya OCR downloads ~500MB of model weights from HuggingFace. Requires internet access.
-
-**Surya OCR patches (required — apply before first run):**
-
-Two bugs in `surya-ocr==0.7.0` must be patched in the installed venv:
-
-**Bug #14** — `venv/Lib/site-packages/surya/model/recognition/config.py`, class `SuryaOCRConfig.__init__`:
-Move `encoder` and `decoder` keyword argument extraction to before the `super().__init__()` call, add `None` defaults, and guard downstream token ID assignment with a null check on the decoder config.
-
-**Bug #16** — same file, add a `get_text_config` override:
-```python
-def get_text_config(self, decoder=None, encoder=None):
-    # transformers >=4.57 raises ValueError when both text_encoder and decoder
-    # sub-configs exist. Override to disambiguate.
-    if encoder is True:
-        return self.text_encoder if hasattr(self, "text_encoder") and self.text_encoder is not None else self
-    return self.decoder if hasattr(self, "decoder") and self.decoder is not None else self
 ```
 
 ---
