@@ -21,16 +21,25 @@ CREATE TABLE IF NOT EXISTS jobs (
     extracted_data TEXT,       -- JSON string
     fhir_bundle TEXT,          -- JSON string
     validation_report TEXT,    -- JSON string
+    excel_export_path TEXT,    -- path to Stage 2.5 cross-verification workbook
     error_message TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 """
 
+# Migration: add excel_export_path to databases created before Stage 2.5.
+# ALTER TABLE raises OperationalError if the column already exists — swallow it.
+_MIGRATE_ADD_EXCEL_COLUMN = "ALTER TABLE jobs ADD COLUMN excel_export_path TEXT"
+
 
 async def init_db() -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(CREATE_JOBS_TABLE)
+        try:
+            await db.execute(_MIGRATE_ADD_EXCEL_COLUMN)
+        except Exception:
+            pass   # Column already exists in an existing database — nothing to do
         await db.commit()
 
 
@@ -70,8 +79,8 @@ async def get_job(job_id: str) -> Optional[dict[str, Any]]:
 # accidental programming errors from injecting bad column names.
 _ALLOWED_UPDATE_COLUMNS = frozenset({
     "status", "document_type", "raw_text", "ocr_method", "page_count",
-    "extracted_data", "fhir_bundle", "validation_report", "error_message",
-    "updated_at",
+    "extracted_data", "fhir_bundle", "validation_report", "excel_export_path",
+    "error_message", "updated_at",
 })
 
 

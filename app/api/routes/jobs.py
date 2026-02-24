@@ -8,14 +8,17 @@ PUT  /api/v1/jobs/{job_id}/extracted        – Human review: update extracted d
 POST /api/v1/jobs/{job_id}/generate-fhir    – Generate FHIR bundle from extracted data
 GET  /api/v1/jobs/{job_id}/fhir             – Fetch generated FHIR bundle
 GET  /api/v1/jobs/{job_id}/validation       – Fetch FHIR validation report
+GET  /api/v1/jobs/{job_id}/excel            – Download Stage 2.5 Excel cross-verification workbook
 """
 
 import asyncio
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.db.database import get_job, update_job
@@ -34,6 +37,14 @@ from app.services.fhir_validator import validate_fhir_bundle
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Statuses that allow FHIR generation:
+#   "awaiting_verification" — normal post-Stage-2.5 gate
+#   "completed"             — re-generation after human review edits
+_FHIR_ALLOWED_STATUSES = {"awaiting_verification", "completed"}
+
+# Statuses that allow human updates to extracted data
+_UPDATE_ALLOWED_STATUSES = {"awaiting_verification", "completed", "failed"}
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -55,6 +66,7 @@ def _to_response(job: dict) -> JobResponse:
         error_message=job.get("error_message"),
         created_at=datetime.fromisoformat(job["created_at"]),
         updated_at=datetime.fromisoformat(job["updated_at"]),
+        excel_export_path=job.get("excel_export_path"),
     )
 
 
@@ -123,13 +135,22 @@ class UpdateExtractedRequest(BaseModel):
 @router.put("/{job_id}/extracted", response_model=JobExtractedResponse)
 async def update_extracted_data(job_id: str, body: UpdateExtractedRequest):
     """
-    Human review endpoint – update the extracted data before FHIR generation.
+    Human review endpoint — update the extracted data before or after FHIR generation.
     Useful for correcting OCR errors or LLM extraction mistakes.
+
+    Status is NOT changed by this call. Call POST /generate-fhir when ready.
+    Allowed statuses: awaiting_verification, completed, failed.
     """
     job = await _require_job(job_id)
-    if job["status"] not in ("completed", "failed"):
-        raise HTTPException(status_code=400, detail="Can only update extracted data for completed/failed jobs")
-    await update_job(job_id, extracted_data=body.extracted_data, status="completed")
+    if job["status"] not in _UPDATE_ALLOWED_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Cannot update extracted data when job status is '{job['status']}'. "
+                f"Allowed statuses: {sorted(_UPDATE_ALLOWED_STATUSES)}"
+            ),
+        )
+    await update_job(job_id, extracted_data=body.extracted_data)
     updated_job = await _require_job(job_id)
     doc_type = updated_job.get("document_type")
     return JobExtractedResponse(
@@ -145,12 +166,24 @@ async def update_extracted_data(job_id: str, body: UpdateExtractedRequest):
 @router.post("/{job_id}/generate-fhir", response_model=JobFhirResponse)
 async def generate_fhir(job_id: str):
     """
-    Generate and store the FHIR R4 bundle from the extracted clinical data.
+    Generate (or re-generate) the FHIR R4 bundle from the current extracted data.
     Also runs structural validation and stores the validation report.
+
+    Allowed when status is:
+      - "awaiting_verification" — normal flow after Stage 2.5 cross-verification
+      - "completed"             — re-generation after human review edits
+
+    On success, job status transitions to "completed".
     """
     job = await _require_job(job_id)
-    if job["status"] != "completed":
-        raise HTTPException(status_code=400, detail="Job must be in 'completed' state to generate FHIR bundle")
+    if job["status"] not in _FHIR_ALLOWED_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Cannot generate FHIR bundle when job status is '{job['status']}'. "
+                f"Allowed statuses: {sorted(_FHIR_ALLOWED_STATUSES)}"
+            ),
+        )
     extracted = job.get("extracted_data")
     if not extracted:
         raise HTTPException(status_code=400, detail="No extracted data found for this job")
@@ -163,7 +196,16 @@ async def generate_fhir(job_id: str):
     validation = await asyncio.to_thread(validate_fhir_bundle, bundle)
     validation_dict = validation.to_dict()
 
-    await update_job(job_id, fhir_bundle=bundle, validation_report=validation_dict)
+    await update_job(
+        job_id,
+        fhir_bundle=bundle,
+        validation_report=validation_dict,
+        status="completed",
+    )
+    logger.info(
+        "[%s] FHIR bundle generated. %d resources, valid=%s",
+        job_id, validation.resource_count, validation.is_valid,
+    )
 
     return JobFhirResponse(job_id=job_id, fhir_bundle=bundle)
 
@@ -201,4 +243,44 @@ async def get_validation_report(job_id: str):
         errors=report.get("errors", []),
         warnings=report.get("warnings", []),
         resource_count=report.get("resource_count", 0),
+    )
+
+
+# ─── GET /jobs/{job_id}/excel ─────────────────────────────────────────────────
+
+@router.get("/{job_id}/excel")
+async def get_excel_export(job_id: str):
+    """
+    Download the Stage 2.5 Excel cross-verification workbook for this job.
+
+    The workbook is generated automatically after LLM extraction completes.
+    It becomes available once status is "awaiting_verification" (or later).
+
+    Returns the .xlsx file as a direct file download.
+    MIME type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+    """
+    job = await _require_job(job_id)
+    excel_path_str = job.get("excel_export_path")
+
+    if not excel_path_str:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Excel workbook not yet generated for this job. "
+                "The pipeline must reach 'awaiting_verification' status first. "
+                f"Current status: '{job['status']}'"
+            ),
+        )
+
+    excel_path = Path(excel_path_str)
+    if not excel_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Excel file not found on disk. It may have been moved or deleted.",
+        )
+
+    return FileResponse(
+        path=str(excel_path),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=excel_path.name,
     )

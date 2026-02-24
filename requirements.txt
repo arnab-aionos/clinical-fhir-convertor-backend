@@ -20,6 +20,9 @@ groq==0.15.0
 # FHIR
 fhir.resources==7.1.0
 
+# Excel export (Stage 2.5 cross-verification workbook)
+openpyxl==3.1.5
+
 # Settings & env
 python-dotenv==1.0.1
 pydantic==2.10.6

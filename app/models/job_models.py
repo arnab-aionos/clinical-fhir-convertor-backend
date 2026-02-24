@@ -7,6 +7,7 @@ from datetime import datetime
 class JobStatus(str, Enum):
     PENDING = "pending"
     PROCESSING = "processing"
+    AWAITING_VERIFICATION = "awaiting_verification"   # Stage 2.5: Excel generated, awaiting explicit FHIR trigger
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -25,6 +26,7 @@ class JobResponse(BaseModel):
     error_message: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    excel_export_path: Optional[str] = None   # Set after Stage 2.5 Excel generation
 
 
 class JobTextResponse(BaseModel):
