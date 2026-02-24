@@ -84,6 +84,32 @@ _ALLOWED_UPDATE_COLUMNS = frozenset({
 })
 
 
+async def get_all_jobs(limit: int = 50) -> list[dict[str, Any]]:
+    """Return the most recent *limit* jobs ordered by created_at DESC."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            results = []
+            for row in rows:
+                result = dict(row)
+                for field in ("extracted_data", "fhir_bundle", "validation_report"):
+                    if result.get(field):
+                        result[field] = json.loads(result[field])
+                results.append(result)
+            return results
+
+
+async def delete_job(job_id: str) -> bool:
+    """Delete a job record by ID. Returns True if a row was deleted, False if not found."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
 async def update_job(job_id: str, **kwargs) -> None:
     if not kwargs:
         return

@@ -51,6 +51,49 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _to_fhir_date(raw: Optional[str]) -> Optional[str]:
+    """
+    Normalise a raw date/datetime string extracted by the LLM into an
+    ISO 8601 FHIR-compatible date (YYYY-MM-DD or YYYY-MM-DDThh:mm:ssZ).
+
+    Handles common Indian/clinical formats:
+      DD/MM/YYYY [H:MMam/pm]  → YYYY-MM-DDThh:mm:ssZ
+      DD-MM-YYYY              → YYYY-MM-DD
+      YYYY-MM-DD              → returned as-is
+      Already valid ISO       → returned as-is
+
+    Returns None if the string cannot be parsed.
+    """
+    if not raw:
+        return None
+    raw = raw.strip()
+    # Already looks like YYYY-... (ISO-ish)
+    if len(raw) >= 4 and raw[:4].isdigit() and raw[4:5] in ("-", "T", ""):
+        return raw
+
+    from datetime import datetime as dt
+    formats = [
+        "%d/%m/%Y %I:%M%p",   # 15/03/2025 1:28PM
+        "%d/%m/%Y %I:%M %p",  # 15/03/2025 1:28 PM
+        "%d/%m/%Y %H:%M",     # 15/03/2025 13:28
+        "%d/%m/%Y",            # 15/03/2025
+        "%d-%m-%Y",            # 15-03-2025
+        "%d %B %Y",            # 15 March 2025
+        "%B %d, %Y",           # March 15, 2025
+        "%d/%m/%y",            # 15/03/25
+    ]
+    for fmt in formats:
+        try:
+            parsed = dt.strptime(raw, fmt)
+            if "%H" in fmt or "%I" in fmt:
+                return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
+            return parsed.strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    logger.debug("Could not parse date %r — omitting from FHIR resource", raw)
+    return None
+
+
 def _profile(name: str) -> list[dict]:
     return [{"url": f"{_NHCX_BASE}/{name}"}]
 
@@ -78,7 +121,9 @@ def _build_patient(patient: dict) -> dict:
         else:
             resource["gender"] = "unknown"
     if patient.get("dob"):
-        resource["birthDate"] = patient["dob"]
+        dob = _to_fhir_date(patient["dob"])
+        if dob:
+            resource["birthDate"] = dob
     if patient.get("id"):
         resource["identifier"] = [{"value": patient["id"], "system": "urn:nhcx:patient-id"}]
     if patient.get("address"):
@@ -93,8 +138,9 @@ def _build_organization(name: Optional[str], address: Optional[str], profile: st
         "meta": _meta(profile),
         "name": name or "Unknown Organization",
     }
+    # R5: address moved inside contact[].address
     if address:
-        resource["address"] = [{"text": address}]
+        resource["contact"] = [{"address": {"text": address}}]
     return resource
 
 
@@ -115,16 +161,22 @@ def _build_encounter(encounter: dict, patient_ref: str, org_ref: Optional[str]) 
         "id": _uid(),
         "meta": _meta("NHCXEncounter"),
         "status": "finished",
-        "class": {"system": "http://terminology.hl7.org/CodeSystem/v3-ActCode", "code": "IMP", "display": "inpatient encounter"},
+        # R5: class is array of CodeableConcept (was single Coding in R4)
+        "class": [{"coding": [{"system": "http://terminology.hl7.org/CodeSystem/v3-ActCode", "code": "IMP", "display": "inpatient encounter"}]}],
         "subject": {"reference": patient_ref},
     }
     period: dict[str, str] = {}
     if encounter.get("admission_date"):
-        period["start"] = encounter["admission_date"]
+        d = _to_fhir_date(encounter["admission_date"])
+        if d:
+            period["start"] = d
     if encounter.get("discharge_date"):
-        period["end"] = encounter["discharge_date"]
+        d = _to_fhir_date(encounter["discharge_date"])
+        if d:
+            period["end"] = d
     if period:
-        resource["period"] = period
+        # R5: Encounter.period renamed to actualPeriod
+        resource["actualPeriod"] = period
     if encounter.get("department") or encounter.get("ward"):
         loc_parts = [p for p in [encounter.get("department"), encounter.get("ward")] if p]
         resource["location"] = [{"location": {"display": " / ".join(loc_parts)}}]
@@ -134,7 +186,7 @@ def _build_encounter(encounter: dict, patient_ref: str, org_ref: Optional[str]) 
 
 
 def _build_condition(diagnosis: dict, patient_ref: str, encounter_ref: str) -> dict:
-    code_text = diagnosis.get("text", "Unspecified condition")
+    code_text = diagnosis.get("text") or "Unspecified condition"
     coding: list[dict] = []
     if diagnosis.get("icd_code"):
         coding.append({
@@ -165,12 +217,15 @@ def _build_procedure(procedure: dict, patient_ref: str, encounter_ref: str) -> d
         "id": _uid(),
         "meta": _meta("NHCXProcedure"),
         "status": "completed",
-        "code": {"text": procedure.get("text", "Unspecified procedure")},
+        "code": {"text": procedure.get("text") or "Unspecified procedure"},
         "subject": {"reference": patient_ref},
         "encounter": {"reference": encounter_ref},
     }
     if procedure.get("date"):
-        resource["performedDateTime"] = procedure["date"]
+        d = _to_fhir_date(procedure["date"])
+        if d:
+            # R5: performedDateTime renamed to occurrenceDateTime
+            resource["occurrenceDateTime"] = d
     return resource
 
 
@@ -195,7 +250,7 @@ def _build_vital_observation(vital_key: str, value: str, patient_ref: str, encou
 
 
 def _build_lab_observation(investigation: dict, patient_ref: str, encounter_ref: str) -> dict:
-    param = investigation.get("test") or investigation.get("parameter", "Unknown test")
+    param = investigation.get("test") or investigation.get("parameter") or "Unknown test"
     loinc_code = investigation.get("loinc_code", "")
     obs: dict[str, Any] = {
         "resourceType": "Observation",
@@ -216,11 +271,14 @@ def _build_lab_observation(investigation: dict, patient_ref: str, encounter_ref:
     result = investigation.get("result")
     if result:
         try:
-            obs["valueQuantity"] = {
+            vq: dict[str, Any] = {
                 "value": float(result),
-                "unit": investigation.get("unit", ""),
                 "system": "http://unitsofmeasure.org",
             }
+            unit = investigation.get("unit") or ""
+            if unit:
+                vq["unit"] = unit
+            obs["valueQuantity"] = vq
         except (ValueError, TypeError):
             obs["valueString"] = str(result)
             if investigation.get("unit"):
@@ -234,19 +292,22 @@ def _build_lab_observation(investigation: dict, patient_ref: str, encounter_ref:
 
 
 def _build_medication_statement(med: dict, patient_ref: str) -> dict:
-    return {
+    resource: dict[str, Any] = {
         "resourceType": "MedicationStatement",
         "id": _uid(),
         "meta": _meta("NHCXMedicationStatement"),
-        "status": "active",
-        "medicationCodeableConcept": {"text": med.get("drug", "Unknown medication")},
+        "status": "recorded",
+        # R5: medication is CodeableReference — use concept for coded text
+        "medication": {"concept": {"text": med.get("drug") or med.get("name") or "Unknown medication"}},
         "subject": {"reference": patient_ref},
-        "dosage": [{
-            "text": " ".join(filter(None, [
-                med.get("dosage"), med.get("frequency"), med.get("duration"), med.get("route")
-            ])),
-        }],
     }
+    # Only add dosage when there is actual text — FHIR schema rejects empty string
+    dosage_text = " ".join(filter(None, [
+        med.get("dosage"), med.get("frequency"), med.get("duration"), med.get("route")
+    ]))
+    if dosage_text:
+        resource["dosage"] = [{"text": dosage_text}]
+    return resource
 
 
 def _ref(resource: dict) -> str:
@@ -359,7 +420,8 @@ def map_discharge_summary(data: dict) -> dict:
             "text": "Discharge Summary",
         },
         "date": _now_iso(),
-        "subject": {"reference": _ref(patient)},
+        # R5: Composition.subject is array (was single Reference in R4)
+        "subject": [{"reference": _ref(patient)}],
         "encounter": {"reference": _ref(encounter)},
         "author": composition_author,
         "title": "Discharge Summary",
@@ -406,11 +468,11 @@ def map_diagnostic_report(data: dict) -> dict:
         "status": "final",
         "category": [{"coding": [{"system": "http://terminology.hl7.org/CodeSystem/v2-0074", "code": "LAB", "display": "Laboratory"}]}],
         "code": {
-            "text": data.get("test_category", "Laboratory Report"),
+            "text": data.get("test_category") or "Laboratory Report",
             "coding": [{"system": "http://loinc.org", "code": "11502-2", "display": "Laboratory report"}],
         },
         "subject": {"reference": _ref(patient)},
-        "effectiveDateTime": data.get("report_date") or _now_iso(),
+        "effectiveDateTime": _to_fhir_date(data.get("report_date")) or _now_iso(),
         "issued": _now_iso(),
         "performer": [{"reference": _ref(lab_org)}],
         "result": [{"reference": _ref(o)} for o in observations],

@@ -1,6 +1,7 @@
 """
 Jobs Route
 ──────────
+GET  /api/v1/jobs                           – List recent jobs (last 50, newest first)
 GET  /api/v1/jobs/{job_id}                  – Job status + metadata
 GET  /api/v1/jobs/{job_id}/text             – Raw OCR/extracted text
 GET  /api/v1/jobs/{job_id}/extracted        – LLM-extracted structured JSON
@@ -21,7 +22,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from app.db.database import get_job, update_job
+from app.db.database import delete_job, get_all_jobs, get_job, update_job
 from app.models.job_models import (
     ConfidenceDetail,
     JobExtractedResponse,
@@ -68,6 +69,17 @@ def _to_response(job: dict) -> JobResponse:
         updated_at=datetime.fromisoformat(job["updated_at"]),
         excel_export_path=job.get("excel_export_path"),
     )
+
+
+# ─── GET /jobs ────────────────────────────────────────────────────────────────
+# IMPORTANT: this static route must be registered BEFORE /{job_id} to avoid
+# FastAPI treating "jobs" as a job_id path parameter.
+
+@router.get("", response_model=list[JobResponse])
+async def list_jobs():
+    """Return the 50 most recent jobs, newest first."""
+    jobs = await get_all_jobs(limit=50)
+    return [_to_response(j) for j in jobs]
 
 
 # ─── GET /jobs/{job_id} ───────────────────────────────────────────────────────
@@ -284,3 +296,17 @@ async def get_excel_export(job_id: str):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename=excel_path.name,
     )
+
+
+# ─── DELETE /jobs/{job_id} ────────────────────────────────────────────────────
+
+@router.delete("/{job_id}", status_code=204)
+async def delete_job_record(job_id: str):
+    """
+    Permanently delete a job and all its associated data from the database.
+    The uploaded PDF file on disk is NOT deleted (it remains in the uploads/ folder).
+    Returns 204 No Content on success, 404 if the job does not exist.
+    """
+    deleted = await delete_job(job_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Job {job_id!r} not found")
