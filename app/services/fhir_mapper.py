@@ -82,6 +82,12 @@ _LAB_LOINC: dict[str, str] = {
     "totalprotein": "2885-2",
     "albumin": "1751-7",
     "globulin": "10834-0",
+    # Anthropometrics (often captured as investigations in discharge summaries)
+    "weight": "29463-7", "bodyweight": "29463-7",
+    "height": "8302-2", "bodyheight": "8302-2",
+    "bmi": "39156-5", "bodymassindex": "39156-5",
+    "waistcircumference": "56115-9",
+    "headcircumference": "9843-4",
     # Biochemistry – minerals
     "calcium": "17861-6",
     "phosphorus": "2777-1", "phosphate": "2777-1",
