@@ -14,24 +14,26 @@ GET  /api/v1/jobs/{job_id}/excel            – Download Stage 2.5 Excel cross-v
 
 import asyncio
 import logging
+import math
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.db.database import delete_job, get_all_jobs, get_job, update_job
 from app.models.job_models import (
     ConfidenceDetail,
+    DocumentType,
     JobExtractedResponse,
     JobFhirResponse,
     JobResponse,
     JobStatus,
     JobTextResponse,
     JobValidationResponse,
-    DocumentType,
+    PaginatedJobsResponse,
 )
 from app.services.fhir_mapper import generate_fhir_bundle
 from app.services.fhir_validator import validate_fhir_bundle
@@ -74,11 +76,27 @@ def _to_response(job: dict) -> JobResponse:
 # IMPORTANT: this static route must be registered BEFORE /{job_id} to avoid
 # FastAPI treating "jobs" as a job_id path parameter.
 
-@router.get("", response_model=list[JobResponse])
-async def list_jobs():
-    """Return the 50 most recent jobs, newest first."""
-    jobs = await get_all_jobs(limit=50)
-    return [_to_response(j) for j in jobs]
+@router.get("", response_model=PaginatedJobsResponse)
+async def list_jobs(
+    document_type: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=50),
+):
+    """Return paginated jobs, newest first. Optionally filtered by document_type."""
+    valid_type = document_type if document_type in ("discharge_summary", "diagnostic_report") else None
+    jobs_data, total = await get_all_jobs(
+        document_type=valid_type,
+        page=page,
+        page_size=page_size,
+    )
+    total_pages = max(1, math.ceil(total / page_size))
+    return PaginatedJobsResponse(
+        jobs=[_to_response(j) for j in jobs_data],
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
 
 
 

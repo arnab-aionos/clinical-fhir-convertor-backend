@@ -64,3 +64,11 @@ class JobValidationResponse(BaseModel):
     errors: list[str]
     warnings: list[str]
     resource_count: int
+
+
+class PaginatedJobsResponse(BaseModel):
+    jobs: list[JobResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int

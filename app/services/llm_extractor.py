@@ -384,17 +384,27 @@ def _extract_with_chunking(doc_type: str, expanded_text: str) -> dict[str, Any]:
 
 # Public entry point
 
-def extract_clinical_data(raw_text: str) -> tuple[str, dict[str, Any]]:
+def extract_clinical_data(
+    raw_text: str,
+    doc_type_hint: str | None = None,
+) -> tuple[str, dict[str, Any]]:
     """
     Full extraction pipeline.
     Returns (document_type, extracted_dict_with_confidence).
+
+    If doc_type_hint is "discharge_summary" or "diagnostic_report", the LLM
+    classification step is skipped and that type is used directly.
     """
     logger.info("Pre-processing: expanding medical abbreviations…")
     expanded_text = expand_abbreviations(raw_text)
 
-    logger.info("Classifying document type…")
-    doc_type = classify_document(expanded_text)
-    logger.info("Classified as: %s", doc_type)
+    if doc_type_hint in ("discharge_summary", "diagnostic_report"):
+        logger.info("Document type provided by caller: %s (skipping classification).", doc_type_hint)
+        doc_type = doc_type_hint
+    else:
+        logger.info("Classifying document type…")
+        doc_type = classify_document(expanded_text)
+        logger.info("Classified as: %s", doc_type)
 
     logger.info("Extracting structured data…")
     raw_extracted = _extract_with_chunking(

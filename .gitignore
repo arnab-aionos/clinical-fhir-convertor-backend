@@ -218,3 +218,6 @@ __marimo__/
 uploads*
 tests*
 clinical_fhir.db
+*.db
+*.sqlite
+*.sqlite3

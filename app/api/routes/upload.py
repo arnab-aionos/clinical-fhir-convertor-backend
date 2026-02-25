@@ -17,11 +17,11 @@ import logging
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File, Form
 
 from app.core.config import get_settings
 from app.db.database import create_job, update_job
-from app.models.job_models import JobResponse, JobStatus
+from app.models.job_models import DocumentType, JobResponse, JobStatus
 from app.services.pdf_processor import process_pdf
 from app.services.llm_extractor import extract_clinical_data
 from app.services.excel_exporter import ExcelExporter
@@ -37,9 +37,10 @@ _ALLOWED_TYPES = {
     "image/jpg",
 }
 _ALLOWED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
+_VALID_DOC_TYPES = {"discharge_summary", "diagnostic_report"}
 
 
-async def _run_pipeline(job_id: str, file_path: str) -> None:
+async def _run_pipeline(job_id: str, file_path: str, doc_type_hint: str | None = None) -> None:
     """
     Full background pipeline: text extraction → LLM extraction → Excel workbook.
     Halts at "awaiting_verification". Stage 3 (FHIR) requires an explicit
@@ -65,7 +66,7 @@ async def _run_pipeline(job_id: str, file_path: str) -> None:
 
         # Stage 2: LLM classification + extraction
         logger.info("[%s] Stage 2: LLM extraction…", job_id)
-        doc_type, extracted = await asyncio.to_thread(extract_clinical_data, result.raw_text)
+        doc_type, extracted = await asyncio.to_thread(extract_clinical_data, result.raw_text, doc_type_hint)
 
         await update_job(job_id, document_type=doc_type, extracted_data=extracted)
         logger.info("[%s] Stage 2 complete. Document type: %s", job_id, doc_type)
@@ -107,6 +108,7 @@ async def _run_pipeline(job_id: str, file_path: str) -> None:
 async def upload_file(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    document_type: str | None = Form(None),
 ):
     """
     Upload a clinical PDF (discharge summary or diagnostic report).
@@ -142,22 +144,26 @@ async def upload_file(
     file_path.write_bytes(content)
     logger.info("Saved upload: %s (%d bytes)", file_path, len(content))
 
-    # Create job record
+    # Validate the document_type hint if provided; ignore unknown values
+    doc_type_hint = document_type if document_type in _VALID_DOC_TYPES else None
+
+    # Create job record (store hint immediately so the frontend can read it)
     job = await create_job(
         job_id=job_id,
         filename=file.filename or safe_name,
         file_path=str(file_path),
+        document_type=doc_type_hint,
     )
 
-    # Launch background pipeline
-    background_tasks.add_task(_run_pipeline, job_id, str(file_path))
+    # Launch background pipeline (passes hint to skip classification when set)
+    background_tasks.add_task(_run_pipeline, job_id, str(file_path), doc_type_hint)
 
     from datetime import datetime
     return JobResponse(
         job_id=job["id"],
         status=JobStatus(job["status"]),
         filename=job["filename"],
-        document_type=None,
+        document_type=DocumentType(doc_type_hint) if doc_type_hint else None,
         error_message=job.get("error_message"),
         created_at=datetime.fromisoformat(job["created_at"]),
         updated_at=datetime.fromisoformat(job["updated_at"]),

@@ -47,13 +47,18 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-async def create_job(job_id: str, filename: str, file_path: str) -> dict[str, Any]:
+async def create_job(
+    job_id: str,
+    filename: str,
+    file_path: str,
+    document_type: str | None = None,
+) -> dict[str, Any]:
     now = _now()
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            """INSERT INTO jobs (id, status, filename, file_path, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (job_id, "pending", filename, file_path, now, now),
+            """INSERT INTO jobs (id, status, filename, file_path, document_type, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (job_id, "pending", filename, file_path, document_type, now, now),
         )
         await db.commit()
     return await get_job(job_id)
@@ -84,22 +89,44 @@ _ALLOWED_UPDATE_COLUMNS = frozenset({
 })
 
 
-async def get_all_jobs(limit: int = 50) -> list[dict[str, Any]]:
-    """Return the most recent *limit* jobs ordered by created_at DESC."""
+async def get_all_jobs(
+    document_type: str | None = None,
+    page: int = 1,
+    page_size: int = 10,
+) -> tuple[list[dict[str, Any]], int]:
+    """Return a paginated slice of jobs ordered by created_at DESC.
+
+    Returns (jobs, total_count) where total_count is the number of rows
+    matching the filter (before pagination).
+    """
+    offset = (page - 1) * page_size
+    where = ""
+    params: list[Any] = []
+    if document_type in ("discharge_summary", "diagnostic_report"):
+        where = "WHERE document_type = ?"
+        params.append(document_type)
+
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
+
+        async with db.execute(f"SELECT COUNT(*) FROM jobs {where}", params) as cursor:
+            row = await cursor.fetchone()
+            total: int = row[0]
+
         async with db.execute(
-            "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
+            f"SELECT * FROM jobs {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            params + [page_size, offset],
         ) as cursor:
             rows = await cursor.fetchall()
-            results = []
+            results: list[dict[str, Any]] = []
             for row in rows:
                 result = dict(row)
                 for field in ("extracted_data", "fhir_bundle", "validation_report"):
                     if result.get(field):
                         result[field] = json.loads(result[field])
                 results.append(result)
-            return results
+
+        return results, total
 
 
 async def delete_job(job_id: str) -> bool:
