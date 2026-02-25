@@ -64,6 +64,7 @@ Rules:
   - Diagnoses: list both provisional and final, set "type" accordingly.
   - Medications: capture drug name, dosage, frequency, duration, route.
   - Investigations: capture every lab result row (parameter, result, unit, ref_range).
+  - Investigations: for loinc_code, attempt common mappings (e.g. Hemoglobin → 718-7, SGPT → 1742-6). Leave null if unsure.
   - Vitals: capture each vital sign value as a string including its unit."""
 
 
@@ -106,7 +107,7 @@ _DS_SCHEMA = """{
     "height": null
   },
   "investigations": [
-    {"test": null, "result": null, "unit": null, "ref_range": null, "is_abnormal": false}
+    {"test": null, "result": null, "unit": null, "ref_range": null, "is_abnormal": false, "loinc_code": null}
   ],
   "medications": [
     {"drug": null, "dosage": null, "frequency": null, "duration": null, "route": null}

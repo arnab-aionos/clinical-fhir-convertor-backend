@@ -62,6 +62,7 @@ class InvestigationResult(BaseModel):
     unit: Optional[str] = None
     ref_range: Optional[str] = None
     is_abnormal: Optional[bool] = None
+    loinc_code: Optional[str] = None   # LLM-assisted mapping, fallback to static lookup
 
     @field_validator('result', 'unit', mode='before')
     @classmethod

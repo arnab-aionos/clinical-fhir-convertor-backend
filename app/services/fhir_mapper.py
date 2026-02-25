@@ -10,6 +10,7 @@ NHCX profile URLs (meta.profile) follow the ABDM NHCX IG:
   https://nrces.in/ndhm/fhir/r4/StructureDefinition/{ResourceType}
 """
 
+import re
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -39,6 +40,118 @@ _VITAL_UNIT = {
     "bp": "mmHg", "pulse": "/min", "temp": "degF",
     "spo2": "%", "rr": "/min", "weight": "kg", "height": "cm",
 }
+
+# Static LOINC lookup for common Indian clinical lab parameters.
+# Keys are lowercase alphanumeric (normalized). Values are LOINC codes.
+_LAB_LOINC: dict[str, str] = {
+    # Hematology
+    "hemoglobin": "718-7", "haemoglobin": "718-7", "hb": "718-7", "hgb": "718-7",
+    "wbc": "6690-2", "wbccount": "6690-2", "totalleukocytecount": "6690-2", "tlc": "6690-2",
+    "leukocytecount": "6690-2", "totalwbc": "6690-2",
+    "platelet": "777-3", "platelets": "777-3", "plateletcount": "777-3", "plt": "777-3",
+    "rbc": "789-8", "rbccount": "789-8", "erythrocytecount": "789-8",
+    "pcv": "20570-8", "hematocrit": "20570-8", "haematocrit": "20570-8",
+    "mcv": "787-2", "mch": "785-6", "mchc": "786-4",
+    "neutrophil": "770-8", "neutrophils": "770-8", "polymorphs": "770-8",
+    "lymphocyte": "736-9", "lymphocytes": "736-9",
+    "monocyte": "5905-5", "monocytes": "5905-5",
+    "eosinophil": "713-8", "eosinophils": "713-8",
+    "basophil": "706-2", "basophils": "706-2",
+    # Biochemistry – sugars
+    "glucose": "2345-7", "bloodsugar": "2345-7", "rbs": "2339-0",
+    "fbs": "1558-6", "fastingbloodsugar": "1558-6", "fastingglucose": "1558-6",
+    "ppbs": "14743-9", "postprandial": "14743-9",
+    "hba1c": "4548-4", "glycosylatedhemoglobin": "4548-4", "glycatedhemoglobin": "4548-4",
+    # Biochemistry – renal
+    "creatinine": "2160-0",
+    "bloodurea": "22664-7", "urea": "22664-7", "bun": "3094-0",
+    "uricacid": "3084-1",
+    # Biochemistry – electrolytes
+    "sodium": "2951-2", "sersodsodium": "2951-2",
+    "potassium": "2823-3",
+    "chloride": "2075-0",
+    "bicarbonate": "1963-8", "hco3": "1963-8",
+    # Biochemistry – liver
+    "totalbilirubin": "1975-2", "bilirubin": "1975-2",
+    "directbilirubin": "1968-7", "conjugatedbilirubin": "1968-7",
+    "indirectbilirubin": "1971-1",
+    "sgot": "1920-8", "ast": "1920-8",
+    "sgpt": "1742-6", "alt": "1742-6",
+    "alp": "6768-6", "alkalinephosphatase": "6768-6",
+    "ggt": "2324-2", "gammaglutamyltransferase": "2324-2",
+    "totalprotein": "2885-2",
+    "albumin": "1751-7",
+    "globulin": "10834-0",
+    # Biochemistry – minerals
+    "calcium": "17861-6",
+    "phosphorus": "2777-1", "phosphate": "2777-1",
+    "magnesium": "2601-3",
+    # Biochemistry – lipids
+    "totalcholesterol": "2093-3", "cholesterol": "2093-3",
+    "triglycerides": "2571-8", "triglyceride": "2571-8",
+    "hdlcholesterol": "2085-9", "hdl": "2085-9",
+    "ldlcholesterol": "18262-6", "ldl": "18262-6",
+    "vldl": "13457-7",
+    # Thyroid
+    "tsh": "3016-3",
+    "t3": "3053-6",
+    "t4": "3026-2",
+    "freet4": "3024-7", "ft4": "3024-7",
+    "freet3": "3051-0", "ft3": "3051-0",
+    # Urinalysis
+    "urineprotein": "2888-6",
+    "urineglucose": "25428-4",
+    "urinespecificgravity": "2965-2", "specificgravity": "2965-2",
+    "urineph": "2756-5",
+    # Cardiac markers
+    "troponin": "10839-9", "troponini": "10839-9", "tni": "10839-9",
+    "troponint": "6598-7", "tnt": "6598-7",
+    "ckmb": "13969-1",
+    "bnp": "30934-4",
+    "ntprobnp": "33762-6",
+    # Coagulation
+    "pt": "5902-2", "prothrombintime": "5902-2",
+    "aptt": "3173-2", "ptt": "3173-2",
+    "inr": "6301-6",
+    # Inflammation / infection
+    "crp": "1988-5", "creactiveprotein": "1988-5",
+    "esr": "30341-2", "erythrocytesedimentationrate": "30341-2",
+    "procalcitonin": "33959-8", "pct": "33959-8",
+    # Micronutrients
+    "ferritin": "2276-4",
+    "vitaminb12": "2132-9",
+    "vitamind": "14635-7", "25ohvitamind": "14635-7",
+    "folate": "2284-8", "folicacid": "2284-8",
+    # Oncology
+    "psa": "10508-0",
+    "cea": "2857-1",
+    "ca125": "10334-7",
+    "afp": "1834-1",
+}
+
+
+def _lookup_loinc(param_name: str) -> str:
+    """
+    Look up a LOINC code for a lab parameter using the static _LAB_LOINC table.
+    Normalises by lowercasing, stripping non-alphanumeric chars, and removing
+    common prefix words (serum, blood, plasma, fasting, random, urine).
+    Returns the LOINC code string or "" if not found.
+    """
+    if not param_name:
+        return ""
+    normalized = re.sub(r"[^a-z0-9]", "", param_name.lower())
+    # Strip common uninformative prefixes
+    for prefix in ("serum", "blood", "plasma", "fasting", "random", "urine"):
+        if normalized.startswith(prefix) and len(normalized) > len(prefix):
+            normalized = normalized[len(prefix):]
+    # Exact match
+    if normalized in _LAB_LOINC:
+        return _LAB_LOINC[normalized]
+    # Substring match — key contained in normalized input (e.g. "sgpt" in "sgptalat")
+    for key, code in _LAB_LOINC.items():
+        if len(key) >= 3 and key in normalized:
+            return code
+    return ""
 
 
 def _uid() -> str:
@@ -249,7 +362,10 @@ def _build_vital_observation(vital_key: str, value: str, patient_ref: str, encou
 
 def _build_lab_observation(investigation: dict, patient_ref: str, encounter_ref: str) -> dict:
     param = investigation.get("test") or investigation.get("parameter") or "Unknown test"
-    loinc_code = investigation.get("loinc_code", "")
+    # Priority: LLM-provided code → static lookup → empty (coding array omitted)
+    loinc_code = investigation.get("loinc_code") or ""
+    if not loinc_code:
+        loinc_code = _lookup_loinc(param)
     obs: dict[str, Any] = {
         "resourceType": "Observation",
         "id": _uid(),

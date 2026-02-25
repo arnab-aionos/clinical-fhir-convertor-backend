@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Clinical Documents to FHIR Convertor",
+    title="UniHealth — Clinical to FHIR Convertor",
     description=(
         "NHCX Hackathon PS2 – Converts Indian clinical PDFs (discharge summaries, "
         "diagnostic reports) into ABDM/NHCX-compliant FHIR R4 bundles using "
@@ -69,7 +69,7 @@ app.include_router(jobs_router, prefix="/api/v1/jobs", tags=["Jobs"])
 @app.get("/", tags=["Health"])
 async def root():
     return {
-        "service": "Clinical FHIR Convertor",
+        "service": "UniHealth — Clinical to FHIR Convertor",
         "version": "1.0.0",
         "status": "running",
         "docs": "/docs",
