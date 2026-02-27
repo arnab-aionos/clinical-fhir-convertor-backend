@@ -203,15 +203,11 @@ def _nhcx_warnings(resource: dict) -> list[str]:
         has_icd = any(
             "icd" in c.get("system", "").lower() for c in codings
         )
-        if not codings:
+        if not has_icd:
+            diag_text = resource.get("code", {}).get("text", "?")
             warnings.append(
-                f"Condition/{resource.get('id', '?')}: missing code.coding — "
+                f"Condition ({diag_text!r}): no ICD-10 code found — "
                 f"ICD-10 coding recommended for NHCX diagnosis reporting"
-            )
-        elif not has_icd:
-            warnings.append(
-                f"Condition/{resource.get('id', '?')}: code.coding present but no "
-                f"ICD-10 system detected — ICD-10 preferred for NHCX"
             )
 
     # MedicationStatement: check for R4 medication[x] field

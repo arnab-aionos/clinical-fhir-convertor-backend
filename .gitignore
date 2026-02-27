@@ -221,3 +221,4 @@ clinical_fhir.db
 *.db
 *.sqlite
 *.sqlite3
+run_submission_tests.py

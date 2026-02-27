@@ -140,7 +140,136 @@ _LAB_LOINC: dict[str, str] = {
     "cea": "2857-1",
     "ca125": "10334-7",
     "afp": "1834-1",
+    # Blood group / transfusion
+    "bloodgroup": "883-9", "bloodgrouping": "883-9", "abobloodgroup": "883-9", "abogroup": "883-9",
+    "rhtype": "1305-0", "rhfactor": "1305-0", "bloodrh": "1305-0", "rh": "1305-0",
+    # Cytology / histopathology
+    "liquidbasedcytology": "19765-7", "lbc": "19765-7", "liquidcytology": "19765-7",
+    "fnac": "47527-7", "fineneedleaspirationcytology": "47527-7", "fineneedleaspiration": "47527-7",
+    "exfoliativecytology": "19756-6", "exfoliative": "19756-6",
+    "papanicola": "19762-4", "papsmear": "19762-4", "cervicalcytology": "19762-4",
 }
+
+
+# Static ICD-10 lookup for common Indian clinical diagnoses.
+# Keys are lowercase alphanumeric (normalized). Values are ICD-10 codes.
+_CONDITION_ICD: dict[str, str] = {
+    # Cardiovascular
+    "hypertension": "I10", "essentialhypertension": "I10", "htn": "I10",
+    "heartfailure": "I50", "congestiveheartfailure": "I50.0", "chf": "I50.0",
+    "myocardialinfarction": "I21", "acutemi": "I21", "mi": "I21",
+    "stemi": "I21.0", "nstemi": "I21.4",
+    "coronaryarterydisease": "I25.1", "cad": "I25.1",
+    "ischemicheartdisease": "I25", "ihd": "I25",
+    "atrialfibrillation": "I48", "af": "I48",
+    "anginapectoris": "I20", "angina": "I20",
+    "deepveinthrombosis": "I82.4", "dvt": "I82.4",
+    "pulmonaryembolism": "I26",
+    "cardiacarrest": "I46",
+    # Diabetes
+    "diabetesmellitus": "E11", "type2diabetes": "E11", "t2dm": "E11", "dm": "E11",
+    "type1diabetes": "E10", "t1dm": "E10",
+    "diabeticnephropathy": "E11.2", "diabeticretinopathy": "E11.3",
+    "diabeticneuropathy": "E11.4",
+    # Respiratory
+    "pneumonia": "J18", "bacterialpneumonia": "J15",
+    "covid19": "U07.1", "covid": "U07.1", "sarscov2": "U07.1",
+    "copd": "J44", "chronicobstructivepulmonarydisease": "J44",
+    "asthma": "J45", "bronchialasthma": "J45",
+    "pulmonarytuberculosis": "A15", "tuberculosis": "A15", "tb": "A15",
+    "pleuraleffusion": "J90",
+    "acuterespiratorydistresssyndrome": "J80", "ards": "J80",
+    "bronchitis": "J40", "acutebronchitis": "J20",
+    # Gastrointestinal
+    "appendicitis": "K37", "acuteappendicitis": "K37",
+    "cholecystitis": "K81", "acutecholecystitis": "K81.0",
+    "cholelithiasis": "K80", "gallstones": "K80",
+    "pancreatitis": "K85", "acutepancreatitis": "K85", "chronicpancreatitis": "K86.1",
+    "gastroenteritis": "A09",
+    "pepticulcer": "K27", "gastriculcer": "K25", "duodenalulcer": "K26",
+    "gerd": "K21", "gastrooesophagealreflux": "K21",
+    "cirrhosis": "K74.6", "livercirrhosis": "K74.6",
+    "hepatitis": "K75.9", "hepatitisb": "B18.1", "hepatitisc": "B18.2", "hepatitisa": "B15.9",
+    "intestinalobstruction": "K56",
+    # Neurological
+    "stroke": "I64", "cerebrovasculardisease": "I67",
+    "cerebralinfraction": "I63", "ischemicstroke": "I63",
+    "hemorrhagicstroke": "I61", "intracerebralhemorrhage": "I61",
+    "epilepsy": "G40", "seizure": "G40",
+    "meningitis": "G03", "bacterialmeningitis": "G00", "encephalitis": "G04",
+    "parkinsons": "G20", "parkinsonsdisease": "G20",
+    "alzheimer": "G30", "alzheimerdisease": "G30", "dementia": "F03",
+    "migraine": "G43",
+    # Renal
+    "acutekidneyinjury": "N17", "aki": "N17",
+    "chronickidneydisease": "N18", "ckd": "N18",
+    "renalcalculi": "N20", "kidneystones": "N20",
+    "urinarytractinfection": "N39.0", "uti": "N39.0",
+    "nephroticsyndrome": "N04", "glomerulonephritis": "N05", "pyelonephritis": "N12",
+    # Infectious diseases
+    "typhoid": "A01.0", "typhoidfever": "A01.0",
+    "malaria": "B54", "dengue": "A97", "denguefever": "A97",
+    "chickenpox": "B01", "varicella": "B01",
+    "hiv": "B24", "aids": "B24",
+    "sepsis": "A41.9", "septicshock": "A41.9",
+    # Musculoskeletal
+    "rheumatoidarthritis": "M05", "osteoarthritis": "M19",
+    "gout": "M10", "osteoporosis": "M81",
+    "backpain": "M54.5", "lumbarpain": "M54.5",
+    "cervicalspondylosis": "M47.8",
+    "hipfracture": "S72",
+    # Oncology
+    "lungcancer": "C34", "breastcancer": "C50",
+    "coloncancer": "C18", "colorectalcancer": "C20",
+    "prostatecancer": "C61", "cervicalcancer": "C53",
+    "lymphoma": "C85", "leukemia": "C95",
+    "gastriccancer": "C16",
+    # Mental health
+    "depression": "F32", "majordepression": "F32",
+    "anxiety": "F41", "anxietydisorder": "F41",
+    "schizophrenia": "F20", "bipolardisorder": "F31",
+    # Endocrine
+    "hypothyroidism": "E03", "hyperthyroidism": "E05", "thyrotoxicosis": "E05",
+    "obesity": "E66",
+    # Obstetrics / Gynaecology
+    "preeclampsia": "O14", "eclampsia": "O15",
+    "gestationaldiabetes": "O24",
+    # More specific OB delivery codes first — substring match returns the first hit
+    "vacuumdelivery": "O81.4", "vacuumassisted": "O81.4", "vacuumassisteddelivery": "O81.4", "vaccum": "O81.4",
+    "forcepsdelivery": "O81.3",
+    "cesareansection": "O82", "lscs": "O82", "caesarean": "O82",
+    "preterm": "O60", "pretermdelivery": "O60", "pretermbirth": "O60",
+    # Generic delivery codes after specific ones
+    "normaldelivery": "O80", "normalvaginaldelivery": "O80", "vaginaldelivery": "O80",
+    "fullterm": "O80",
+    "anemia": "D64", "irondeficiencyanemia": "D50",
+    # Commonly documented signs / syndromes
+    "fever": "R50", "pyrexia": "R50",
+    "dehydration": "E86",
+    "electrolytedisturbance": "E87",
+    "malnutrition": "E46",
+    "shock": "R57",
+    "cellulitis": "L03",
+}
+
+
+def _lookup_icd(diagnosis_text: str) -> str:
+    """
+    Look up an ICD-10 code for a diagnosis using the static _CONDITION_ICD table.
+    Normalises by lowercasing and stripping non-alphanumeric characters.
+    Returns the ICD-10 code string or "" if not found.
+    """
+    if not diagnosis_text:
+        return ""
+    normalized = re.sub(r"[^a-z0-9]", "", diagnosis_text.lower())
+    # Exact match
+    if normalized in _CONDITION_ICD:
+        return _CONDITION_ICD[normalized]
+    # Substring match — key contained in normalized text (e.g. "htn" in "htnwithckd")
+    for key, code in _CONDITION_ICD.items():
+        if len(key) >= 3 and key in normalized:
+            return code
+    return ""
 
 
 def _lookup_loinc(param_name: str) -> str:
@@ -153,11 +282,14 @@ def _lookup_loinc(param_name: str) -> str:
     if not param_name:
         return ""
     normalized = re.sub(r"[^a-z0-9]", "", param_name.lower())
-    # Strip common uninformative prefixes
+    # Exact match BEFORE prefix stripping (preserves compound names like "bloodgrouping")
+    if normalized in _LAB_LOINC:
+        return _LAB_LOINC[normalized]
+    # Strip common uninformative prefixes then try exact match again
     for prefix in ("serum", "blood", "plasma", "fasting", "random", "urine"):
         if normalized.startswith(prefix) and len(normalized) > len(prefix):
             normalized = normalized[len(prefix):]
-    # Exact match
+            break
     if normalized in _LAB_LOINC:
         return _LAB_LOINC[normalized]
     # Substring match — key contained in normalized input (e.g. "sgpt" in "sgptalat")
@@ -313,10 +445,12 @@ def _build_encounter(encounter: dict, patient_ref: str, org_ref: Optional[str]) 
 def _build_condition(diagnosis: dict, patient_ref: str, encounter_ref: str) -> dict:
     code_text = diagnosis.get("text") or "Unspecified condition"
     coding: list[dict] = []
-    if diagnosis.get("icd_code"):
+    # Use ICD-10 code from LLM output; fall back to static lookup table
+    icd_code = diagnosis.get("icd_code") or _lookup_icd(code_text)
+    if icd_code:
         coding.append({
             "system": "http://hl7.org/fhir/sid/icd-10",
-            "code": diagnosis["icd_code"],
+            "code": icd_code,
             "display": code_text,
         })
 

@@ -10,6 +10,7 @@ POST /api/v1/jobs/{job_id}/generate-fhir    – Generate FHIR bundle from extrac
 GET  /api/v1/jobs/{job_id}/fhir             – Fetch generated FHIR bundle
 GET  /api/v1/jobs/{job_id}/validation       – Fetch FHIR validation report
 GET  /api/v1/jobs/{job_id}/excel            – Download Stage 2.5 Excel cross-verification workbook
+GET  /api/v1/jobs/{job_id}/stream          – SSE stream of job status updates (replaces client polling)
 """
 
 import asyncio
@@ -19,8 +20,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.db.database import delete_job, get_all_jobs, get_job, update_job
@@ -73,8 +74,61 @@ def _to_response(job: dict) -> JobResponse:
     )
 
 
+# Terminal statuses — SSE stream closes when any of these is reached
+_TERMINAL_STATUSES = {"completed", "awaiting_verification", "failed"}
+
 # IMPORTANT: this static route must be registered BEFORE /{job_id} to avoid
 # FastAPI treating "jobs" as a job_id path parameter.
+
+@router.get("/{job_id}/stream")
+async def stream_job_status(job_id: str, request: Request):
+    """Stream job status as Server-Sent Events.
+
+    Polls the DB every 0.5 s and emits a ``data:`` line whenever the status
+    changes. Closes the stream on terminal status (completed / awaiting_verification
+    / failed). A comment heartbeat is sent every ~15 s to prevent proxy timeouts.
+
+    The frontend opens this with ``new EventSource('/api/v1/jobs/{id}/stream')``
+    instead of polling ``GET /api/v1/jobs/{id}`` every few seconds.
+    """
+    async def _events():
+        last_status: str | None = None
+        ticks = 0
+
+        while True:
+            if await request.is_disconnected():
+                break
+
+            job = await get_job(job_id)
+            if job is None:
+                yield 'event: error\ndata: {"error": "job not found"}\n\n'
+                break
+
+            resp = _to_response(job)
+
+            if resp.status != last_status:
+                yield f"data: {resp.model_dump_json()}\n\n"
+                last_status = resp.status
+
+            if resp.status in _TERMINAL_STATUSES:
+                break
+
+            ticks += 1
+            if ticks % 30 == 0:      # heartbeat every ~15 s (30 × 0.5 s)
+                yield ": heartbeat\n\n"
+
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(
+        _events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",   # prevent nginx / caddy buffering
+        },
+    )
+
 
 @router.get("", response_model=PaginatedJobsResponse)
 async def list_jobs(
