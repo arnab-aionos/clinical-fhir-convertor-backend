@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     # PDFs with fewer chars than this threshold are treated as scanned images
     pdf_text_threshold: int = 100
 
+    # NHCX: NRCeS ABDM FHIR R4 IG profile base URL (overridable via env var)
+    nhcx_profile_base_url: str = "https://nrces.in/ndhm/fhir/r4/StructureDefinition"
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 

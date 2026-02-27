@@ -1,22 +1,30 @@
 """
 FHIR Validator Service
 
-Schema-driven structural validation for FHIR R4 bundles using the
-official HL7 FHIR R4 JSON Schema (fhir.schema.json, 857 definitions).
+Structural validation for FHIR R4 bundles using the official HL7 FHIR R4
+JSON Schema (fhir.schema.json, 680 definitions, id: json-schema/4.0).
 
-Validates each resource in the bundle against its definition in the
-FHIR R4 JSON Schema using jsonschema Draft6Validator + RefResolver.
-All ValidationErrors are collected non-raising and reported as strings.
+Validates each resource in the bundle against its definition using
+jsonschema Draft6Validator + RefResolver. All ValidationErrors are
+collected non-raising and reported as strings.
 
-Also runs NHCX profile compliance checks (warnings, not hard errors).
+Also runs NRCeS ABDM NHCX compliance checks (warnings, not hard errors)
+to flag fields recommended for NHCX claim submission conformance.
+
+Note on validation scope:
+  - Structural validity: validated against HL7 FHIR R4 JSON Schema
+  - NHCX profile conformance: heuristic checks for meta.profile, ABHA
+    identifier, LOINC codes, and required codings. Full NRCeS profile
+    validation (StructureDefinition-level) requires a HAPI FHIR server
+    loaded with the NRCeS ABDM FHIR IG — roadmap item.
 
 Falls back to lightweight required-field checks if fhir.schema.json
 is missing from disk or jsonschema is unavailable.
 
 Returns a ValidationReport with:
-  - is_valid: True if no errors
+  - is_valid: True if no structural errors
   - errors: list of error strings
-  - warnings: list of warning strings
+  - warnings: list of NHCX compliance advisory strings
   - resource_count: number of resources in the bundle
 """
 
@@ -52,14 +60,16 @@ def _init_schema() -> None:
         with open(_SCHEMA_PATH, encoding="utf-8") as fh:
             _FHIR_SCHEMA = json.load(fh)
 
+        schema_version = _FHIR_SCHEMA.get("id", "unknown")
         # Anchor the resolver to the schema's declared id so that all
         # fragment-based $ref values (#/definitions/xxx) resolve correctly.
         schema_id = _FHIR_SCHEMA.get("id") or _SCHEMA_PATH.as_uri()
         _RESOLVER = RefResolver(base_uri=schema_id, referrer=_FHIR_SCHEMA)
         _USE_SCHEMA = True
         logger.info(
-            "FHIR R4 schema loaded from %s — %d definitions available",
+            "FHIR R4 schema loaded from %s (schema id: %s) — %d definitions available",
             _SCHEMA_PATH,
+            schema_version,
             len(_FHIR_SCHEMA.get("definitions", {})),
         )
     except Exception as exc:  # pragma: no cover
@@ -95,18 +105,27 @@ def _fallback_validate(resource: dict) -> list[str]:
     required = _REQUIRED_FIELDS.get(rt)
     if required is None:
         return [f"Unknown or unsupported resourceType: {rt!r}"]
-    return [
+    errors = [
         f"{rt}: missing required field '{field}'"
         for field in required
         if not resource.get(field)
     ]
+    # FHIR R4: MedicationStatement must have medication[x]
+    if rt == "MedicationStatement":
+        has_med = (
+            resource.get("medicationCodeableConcept")
+            or resource.get("medicationReference")
+        )
+        if not has_med:
+            errors.append("MedicationStatement: missing medication[x] (medicationCodeableConcept or medicationReference)")
+    return errors
 
 
 # Schema-driven validation
 
 def _schema_validate(resource: dict) -> list[str]:
     """
-    Validate a single FHIR resource against its definition in fhir.schema.json.
+    Validate a single FHIR R4 resource against its definition in fhir.schema.json.
 
     Returns a list of human-readable error strings (empty list = valid).
     Never raises; all ValidationError exceptions are caught and serialised.
@@ -130,32 +149,82 @@ def _schema_validate(resource: dict) -> list[str]:
     return errors
 
 
-# NHCX compliance warnings
+# NRCeS ABDM NHCX compliance checks
 
 def _nhcx_warnings(resource: dict) -> list[str]:
-    """Check NHCX-specific requirements and return warnings (not hard errors)."""
+    """
+    Check NRCeS ABDM NHCX-specific requirements and return advisory warnings.
+
+    These are conformance recommendations for NHCX claim submission — not
+    structural errors. Bundles that pass structural validation but have
+    warnings are still technically valid FHIR R4; the warnings indicate
+    fields that improve NHCX claim processing.
+    """
     warnings: list[str] = []
     rt = resource.get("resourceType", "")
 
-    # All resources should carry meta.profile
-    if not resource.get("meta", {}).get("profile"):
-        warnings.append(f"{rt}/{resource.get('id', '?')}: missing meta.profile (NHCX compliance)")
+    # All resources should carry meta.profile pointing to NRCeS ABDM IG
+    meta_profiles = resource.get("meta", {}).get("profile", [])
+    if not meta_profiles:
+        warnings.append(
+            f"{rt}/{resource.get('id', '?')}: missing meta.profile "
+            f"(should reference https://nrces.in/ndhm/fhir/r4/StructureDefinition/{rt})"
+        )
+    else:
+        # Warn if profile URL does not reference the NRCeS ABDM IG
+        nrces_profiles = [p for p in meta_profiles if "nrces.in" in p]
+        if not nrces_profiles:
+            warnings.append(
+                f"{rt}/{resource.get('id', '?')}: meta.profile does not reference "
+                f"NRCeS ABDM IG (nrces.in/ndhm/fhir/r4)"
+            )
 
-    # Patient should carry an identifier (ABHA ID or UHID)
+    # Patient: should carry an ABHA ID or hospital UHID for NHCX claim linking
     if rt == "Patient" and not resource.get("identifier"):
-        warnings.append("Patient: missing identifier (ABHA ID or hospital UHID recommended for NHCX)")
+        warnings.append(
+            "Patient: missing identifier — ABHA ID or hospital UHID recommended "
+            "for NHCX claim patient matching"
+        )
 
-    # Observation should have a LOINC code
+    # Observation: should have a LOINC code for interoperability
     if rt == "Observation":
         codings = resource.get("code", {}).get("coding", [])
         has_loinc = any(c.get("system") == "http://loinc.org" for c in codings)
         if not has_loinc:
             param = resource.get("code", {}).get("text", "?")
-            warnings.append(f"Observation ({param!r}): no LOINC code – NHCX compliance recommended")
+            warnings.append(
+                f"Observation ({param!r}): no LOINC code in code.coding — "
+                f"LOINC codes recommended for NHCX claim interoperability"
+            )
 
-    # Condition should have a code
-    if rt == "Condition" and not resource.get("code"):
-        warnings.append(f"Condition/{resource.get('id', '?')}: missing code")
+    # Condition: should have a coded diagnosis (ICD-10 preferred for NHCX)
+    if rt == "Condition":
+        codings = resource.get("code", {}).get("coding", [])
+        has_icd = any(
+            "icd" in c.get("system", "").lower() for c in codings
+        )
+        if not codings:
+            warnings.append(
+                f"Condition/{resource.get('id', '?')}: missing code.coding — "
+                f"ICD-10 coding recommended for NHCX diagnosis reporting"
+            )
+        elif not has_icd:
+            warnings.append(
+                f"Condition/{resource.get('id', '?')}: code.coding present but no "
+                f"ICD-10 system detected — ICD-10 preferred for NHCX"
+            )
+
+    # MedicationStatement: check for R4 medication[x] field
+    if rt == "MedicationStatement":
+        has_med = (
+            resource.get("medicationCodeableConcept")
+            or resource.get("medicationReference")
+        )
+        if not has_med:
+            warnings.append(
+                "MedicationStatement: missing medication[x] field "
+                "(medicationCodeableConcept or medicationReference)"
+            )
 
     return warnings
 
@@ -178,6 +247,10 @@ class ValidationReport:
             "errors": self.errors,
             "warnings": self.warnings,
             "resource_count": self.resource_count,
+            "validation_scope": (
+                "FHIR R4 structural validation (HL7 JSON Schema) + "
+                "NRCeS ABDM NHCX compliance checks"
+            ),
         }
 
 
@@ -185,12 +258,13 @@ def validate_fhir_bundle(bundle: dict) -> ValidationReport:
     """
     Validate a FHIR R4 Bundle dict.
 
-    When fhir.schema.json is present: uses jsonschema Draft6Validator against
-    the official HL7 FHIR R4 schema for each resource type.
+    Structural validation: uses jsonschema Draft6Validator against the
+    official HL7 FHIR R4 JSON Schema (json-schema/4.0, 680 definitions)
+    when fhir.schema.json is present; falls back to required-field checks.
 
-    Fallback (schema absent): lightweight required-field check.
-
-    NHCX compliance warnings are appended in both modes.
+    NHCX compliance checks: additional warnings for NRCeS ABDM profile
+    conformance (meta.profile, ABHA identifiers, LOINC codes, ICD-10 codes).
+    These are advisory — a bundle can be structurally valid with warnings.
     """
     report = ValidationReport()
 
@@ -214,12 +288,12 @@ def validate_fhir_bundle(bundle: dict) -> ValidationReport:
 
     if report.is_valid:
         logger.info(
-            "FHIR bundle validation passed — %d resources, %d warnings (schema=%s)",
+            "FHIR R4 bundle validation passed — %d resources, %d NHCX compliance warnings (schema=%s)",
             report.resource_count, len(report.warnings), _USE_SCHEMA,
         )
     else:
         logger.warning(
-            "FHIR bundle validation FAILED — %d errors, %d warnings (schema=%s)",
+            "FHIR R4 bundle validation FAILED — %d structural errors, %d warnings (schema=%s)",
             len(report.errors), len(report.warnings), _USE_SCHEMA,
         )
 

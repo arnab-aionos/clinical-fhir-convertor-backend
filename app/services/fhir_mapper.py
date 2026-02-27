@@ -6,8 +6,12 @@ Converts extracted clinical JSON to FHIR R4 Bundle dicts.
 Discharge Summary  → Bundle type "document" with Composition root resource
 Diagnostic Report  → Bundle type "collection" with DiagnosticReport root resource
 
-NHCX profile URLs (meta.profile) follow the ABDM NHCX IG:
+Profile URLs follow the NRCeS ABDM FHIR R4 Implementation Guide (v6.5.0):
   https://nrces.in/ndhm/fhir/r4/StructureDefinition/{ResourceType}
+
+Use case: NHCX Claim Submission — supporting clinical documents (discharge
+summaries and diagnostic/lab reports) converted to FHIR R4 bundles for
+submission under the National Health Claims Exchange (NHCX) framework.
 """
 
 import re
@@ -16,10 +20,13 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from app.core.config import get_settings
+
 logger = logging.getLogger(__name__)
 
-# NHCX profile base URL
-_NHCX_BASE = "https://nrces.in/ndhm/fhir/r4/StructureDefinition"
+# NRCeS ABDM FHIR R4 IG profile base URL — loaded from config so it can be
+# overridden via NHCX_PROFILE_BASE_URL env var without touching source code.
+_NHCX_BASE: str = get_settings().nhcx_profile_base_url
 
 # LOINC codes for common vitals
 _VITAL_LOINC = {
@@ -211,11 +218,8 @@ def _to_fhir_date(raw: Optional[str]) -> Optional[str]:
     return None
 
 
-def _profile(name: str) -> list[dict]:
-    return [{"url": f"{_NHCX_BASE}/{name}"}]
-
-
 def _meta(profile_name: str) -> dict:
+    """Return FHIR meta with NRCeS ABDM R4 IG canonical profile URL."""
     return {"profile": [f"{_NHCX_BASE}/{profile_name}"]}
 
 
@@ -226,7 +230,7 @@ def _build_patient(patient: dict) -> dict:
     resource: dict[str, Any] = {
         "resourceType": "Patient",
         "id": _uid(),
-        "meta": _meta("NHCXPatient"),
+        "meta": _meta("Patient"),
         "name": [{"text": name_text}],
     }
     if patient.get("gender"):
@@ -248,16 +252,16 @@ def _build_patient(patient: dict) -> dict:
     return resource
 
 
-def _build_organization(name: Optional[str], address: Optional[str], profile: str) -> dict:
+def _build_organization(name: Optional[str], address: Optional[str]) -> dict:
     resource: dict[str, Any] = {
         "resourceType": "Organization",
         "id": _uid(),
-        "meta": _meta(profile),
+        "meta": _meta("Organization"),
         "name": name or "Unknown Organization",
     }
-    # R5: address moved inside contact[].address
+    # FHIR R4: address is a direct array on Organization
     if address:
-        resource["contact"] = [{"address": {"text": address}}]
+        resource["address"] = [{"text": address}]
     return resource
 
 
@@ -267,7 +271,7 @@ def _build_practitioner(name: Optional[str]) -> Optional[dict]:
     return {
         "resourceType": "Practitioner",
         "id": _uid(),
-        "meta": _meta("NHCXPractitioner"),
+        "meta": _meta("Practitioner"),
         "name": [{"text": name}],
     }
 
@@ -276,10 +280,14 @@ def _build_encounter(encounter: dict, patient_ref: str, org_ref: Optional[str]) 
     resource: dict[str, Any] = {
         "resourceType": "Encounter",
         "id": _uid(),
-        "meta": _meta("NHCXEncounter"),
+        "meta": _meta("Encounter"),
         "status": "finished",
-        # R5: class is array of CodeableConcept (was single Coding in R4)
-        "class": [{"coding": [{"system": "http://terminology.hl7.org/CodeSystem/v3-ActCode", "code": "IMP", "display": "inpatient encounter"}]}],
+        # FHIR R4: class is a single Coding (not array)
+        "class": {
+            "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+            "code": "IMP",
+            "display": "inpatient encounter",
+        },
         "subject": {"reference": patient_ref},
     }
     period: dict[str, str] = {}
@@ -292,8 +300,8 @@ def _build_encounter(encounter: dict, patient_ref: str, org_ref: Optional[str]) 
         if d:
             period["end"] = d
     if period:
-        # R5: Encounter.period renamed to actualPeriod
-        resource["actualPeriod"] = period
+        # FHIR R4: Encounter.period (R5 renamed this to actualPeriod)
+        resource["period"] = period
     if encounter.get("department") or encounter.get("ward"):
         loc_parts = [p for p in [encounter.get("department"), encounter.get("ward")] if p]
         resource["location"] = [{"location": {"display": " / ".join(loc_parts)}}]
@@ -315,7 +323,7 @@ def _build_condition(diagnosis: dict, patient_ref: str, encounter_ref: str) -> d
     return {
         "resourceType": "Condition",
         "id": _uid(),
-        "meta": _meta("NHCXCondition"),
+        "meta": _meta("Condition"),
         "clinicalStatus": {
             "coding": [{"system": "http://terminology.hl7.org/CodeSystem/condition-clinical", "code": "active"}]
         },
@@ -332,7 +340,7 @@ def _build_procedure(procedure: dict, patient_ref: str, encounter_ref: str) -> d
     resource: dict[str, Any] = {
         "resourceType": "Procedure",
         "id": _uid(),
-        "meta": _meta("NHCXProcedure"),
+        "meta": _meta("Procedure"),
         "status": "completed",
         "code": {"text": procedure.get("text") or "Unspecified procedure"},
         "subject": {"reference": patient_ref},
@@ -341,8 +349,8 @@ def _build_procedure(procedure: dict, patient_ref: str, encounter_ref: str) -> d
     if procedure.get("date"):
         d = _to_fhir_date(procedure["date"])
         if d:
-            # R5: performedDateTime renamed to occurrenceDateTime
-            resource["occurrenceDateTime"] = d
+            # FHIR R4: performedDateTime (R5 renamed to occurrenceDateTime)
+            resource["performedDateTime"] = d
     return resource
 
 
@@ -352,7 +360,7 @@ def _build_vital_observation(vital_key: str, value: str, patient_ref: str, encou
     return {
         "resourceType": "Observation",
         "id": _uid(),
-        "meta": _meta("NHCXObservation"),
+        "meta": _meta("Observation"),
         "status": "final",
         "category": [{"coding": [{"system": "http://terminology.hl7.org/CodeSystem/observation-category", "code": "vital-signs", "display": "Vital Signs"}]}],
         "code": {
@@ -375,7 +383,7 @@ def _build_lab_observation(investigation: dict, patient_ref: str, encounter_ref:
     obs: dict[str, Any] = {
         "resourceType": "Observation",
         "id": _uid(),
-        "meta": _meta("NHCXObservation"),
+        "meta": _meta("Observation"),
         "status": "final",
         "category": [{"coding": [{"system": "http://terminology.hl7.org/CodeSystem/observation-category", "code": "laboratory", "display": "Laboratory"}]}],
         "code": {
@@ -415,10 +423,12 @@ def _build_medication_statement(med: dict, patient_ref: str) -> dict:
     resource: dict[str, Any] = {
         "resourceType": "MedicationStatement",
         "id": _uid(),
-        "meta": _meta("NHCXMedicationStatement"),
-        "status": "recorded",
-        # R5: medication is CodeableReference — use concept for coded text
-        "medication": {"concept": {"text": med.get("drug") or med.get("name") or "Unknown medication"}},
+        "meta": _meta("MedicationStatement"),
+        "status": "active",
+        # FHIR R4: medication[x] choice — medicationCodeableConcept for inline text
+        "medicationCodeableConcept": {
+            "text": med.get("drug") or med.get("name") or "Unknown medication"
+        },
         "subject": {"reference": patient_ref},
     }
     # Only add dosage when there is actual text — FHIR schema rejects empty string
@@ -443,7 +453,7 @@ def _entry(resource: dict, fullUrl: Optional[str] = None) -> dict:
     return e
 
 
-# Discharge Summary → FHIR document Bundle
+# Discharge Summary → FHIR document Bundle (NHCX Claim Submission)
 
 def map_discharge_summary(data: dict) -> dict:
     patient_data = data.get("patient") or {}
@@ -452,7 +462,7 @@ def map_discharge_summary(data: dict) -> dict:
     patient = _build_patient(patient_data)
     hospital_name = encounter_data.get("hospital_name") or "Hospital"
     hospital_address = encounter_data.get("hospital_address")
-    org = _build_organization(hospital_name, hospital_address, "NHCXOrganization")
+    org = _build_organization(hospital_name, hospital_address)
     practitioner = _build_practitioner(data.get("treating_doctor"))
     encounter = _build_encounter(encounter_data, _ref(patient), _ref(org))
 
@@ -533,15 +543,15 @@ def map_discharge_summary(data: dict) -> dict:
     composition: dict[str, Any] = {
         "resourceType": "Composition",
         "id": _uid(),
-        "meta": _meta("NHCXComposition"),
+        "meta": _meta("Composition"),
         "status": "final",
         "type": {
             "coding": [{"system": "http://loinc.org", "code": "18842-5", "display": "Discharge summary"}],
             "text": "Discharge Summary",
         },
         "date": _now_iso(),
-        # R5: Composition.subject is array (was single Reference in R4)
-        "subject": [{"reference": _ref(patient)}],
+        # FHIR R4: Composition.subject is a single Reference (not array)
+        "subject": {"reference": _ref(patient)},
         "encounter": {"reference": _ref(encounter)},
         "author": composition_author,
         "title": "Discharge Summary",
@@ -557,7 +567,18 @@ def map_discharge_summary(data: dict) -> dict:
     bundle = {
         "resourceType": "Bundle",
         "id": _uid(),
-        "meta": _meta("NHCXBundle"),
+        "meta": {
+            "profile": [f"{_NHCX_BASE}/Bundle"],
+            # NHCX claim submission tag — identifies this bundle as a supporting
+            # clinical document for NHCX health insurance claim submission
+            "tag": [
+                {
+                    "system": "https://nhcx.abdm.gov.in/fhir/CodeSystem/bundle-use-case",
+                    "code": "claim-submission",
+                    "display": "NHCX Claim Submission",
+                }
+            ],
+        },
         "type": "document",
         "timestamp": _now_iso(),
         "entry": [_entry(r) for r in all_resources],
@@ -565,14 +586,14 @@ def map_discharge_summary(data: dict) -> dict:
     return bundle
 
 
-# Diagnostic Report → FHIR collection Bundle
+# Diagnostic Report → FHIR collection Bundle (NHCX Claim Submission)
 
 def map_diagnostic_report(data: dict) -> dict:
     patient_data = data.get("patient") or {}
     lab_data = data.get("laboratory") or {}
 
     patient = _build_patient(patient_data)
-    lab_org = _build_organization(lab_data.get("name"), lab_data.get("address"), "NHCXOrganization")
+    lab_org = _build_organization(lab_data.get("name"), lab_data.get("address"))
     ref_practitioner = _build_practitioner(data.get("referring_doctor"))
 
     observations = [
@@ -584,7 +605,7 @@ def map_diagnostic_report(data: dict) -> dict:
     diag_report: dict[str, Any] = {
         "resourceType": "DiagnosticReport",
         "id": _uid(),
-        "meta": _meta("NHCXDiagnosticReport"),
+        "meta": _meta("DiagnosticReport"),
         "status": "final",
         "category": [{"coding": [{"system": "http://terminology.hl7.org/CodeSystem/v2-0074", "code": "LAB", "display": "Laboratory"}]}],
         "code": {
@@ -609,7 +630,17 @@ def map_diagnostic_report(data: dict) -> dict:
     bundle = {
         "resourceType": "Bundle",
         "id": _uid(),
-        "meta": _meta("NHCXBundle"),
+        "meta": {
+            "profile": [f"{_NHCX_BASE}/Bundle"],
+            # NHCX claim submission tag
+            "tag": [
+                {
+                    "system": "https://nhcx.abdm.gov.in/fhir/CodeSystem/bundle-use-case",
+                    "code": "claim-submission",
+                    "display": "NHCX Claim Submission",
+                }
+            ],
+        },
         "type": "collection",
         "timestamp": _now_iso(),
         "entry": [_entry(r) for r in all_resources],

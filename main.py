@@ -42,9 +42,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="UniHealth — Clinical to FHIR Convertor",
     description=(
-        "NHCX Hackathon PS2 – Converts Indian clinical PDFs (discharge summaries, "
-        "diagnostic reports) into ABDM/NHCX-compliant FHIR R4 bundles using "
-        "Surya OCR + Groq Llama 3.3 70B."
+        "NHCX PS2 — Claim Submission use case. "
+        "Converts Indian clinical PDFs (discharge summaries, diagnostic/lab reports) "
+        "into ABDM/NHCX-compliant FHIR R4 bundles for health insurance claim submission "
+        "under the National Health Claims Exchange (NHCX) framework. "
+        "Pipeline: Surya OCR → Groq Llama 3.3 70B extraction → Excel review gate → "
+        "FHIR R4 Bundle with NRCeS ABDM profile URLs and NHCX claim-submission tag."
     ),
     version="1.0.0",
     lifespan=lifespan,
@@ -71,6 +74,9 @@ async def root():
     return {
         "service": "UniHealth — Clinical to FHIR Convertor",
         "version": "1.0.0",
+        "use_case": "NHCX Claim Submission",
+        "fhir_version": "R4",
+        "profile_ig": "NRCeS ABDM FHIR IG v6.5.0 (nrces.in/ndhm/fhir/r4)",
         "status": "running",
         "docs": "/docs",
     }
